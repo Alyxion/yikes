@@ -2,8 +2,8 @@
 
 A unified driver for **Claude Code** and **Codex CLI** — runs them directly, inside tmux, or through each backend's remote-control surface, exposes them as a Python library and a thin CLI wrapper, and turns their streaming output into a clean event stream.
 
-!!! warning "Design-only"
-    This site is the concept. **Nothing has been implemented yet.** It captures the plan so we can iterate on the approach before writing code. Pages reference modules that don't exist; treat them as targets, not as documentation of existing behaviour.
+!!! note "Implementation status"
+    The repository now contains the first runnable Python package and Textual terminal app. Some pages still describe the target architecture for the larger session manager; sections marked as roadmap or future design should be read as planned behaviour, not as what the current chatbot slice already implements.
 
 ---
 
@@ -31,11 +31,11 @@ flowchart LR
     class ai_tmux,ai_direct,ai_remote agent
 ```
 
-1. **CLI app** — accepts essentially the same flags as `claude` and `codex` but routes work through `direct`, `tmux`, or `remote-control` depending on the command and explicit flags. Multi-line prompts, image attachments, approval prompts, slash commands, and key presses work where the selected driver supports them.
+1. **CLI app** — the current implementation provides `yikes` / `yikes tui` for the Textual chatbot and `yikes chat-smoke` for integration smoke tests. The interactive chat app exposes only `direct` and `tmux`, because those can service local prompt/response turns. Remote-control remains a backend/session capability for explicit remote commands and smoke-test slots.
 2. **Python library (3.14+)** — `async with Session(...) as s: ...`, iterate streamed events, take snapshots, send keystrokes.
 3. **Shared engine** — owns streaming, line-revision tracking, transcript persistence.
 
-Both flavours (Claude Code, Codex) must work across three drivers. That gives us six combinations to implement and test: `claude/direct`, `claude/tmux`, `claude/remote-control`, `codex/direct`, `codex/tmux`, and `codex/remote-control`.
+Both flavours (Claude Code, Codex) still have six explicit backend/driver test slots: `claude/direct`, `claude/tmux`, `claude/remote-control`, `codex/direct`, `codex/tmux`, and `codex/remote-control`. The interactive chat selector is narrower: it only offers chat-usable drivers (`direct`, `tmux`). Claude remote-control is a human remote UI and is not a local programmatic chat transport.
 
 ---
 
@@ -45,13 +45,13 @@ Both flavours (Claude Code, Codex) must work across three drivers. That gives us
 |---|---|
 | **`direct`** (fast path) | Headless, structured output. `claude -p --output-format stream-json` gives clean token deltas; `codex app-server` gives JSON-RPC with delta events. Lower latency, no screen-scraping, but no access to TUI-only features. |
 | **`tmux`** (TUI fallback) | Anything that must drive the local interactive TUI by keystroke: slash commands, prompts, full-screen flows, manual attach, and recovery when native protocols do not expose a feature. |
-| **`remote-control`** (native remote) | Native remote surfaces. Claude Code uses `claude --remote-control` / `/remote-control`; Codex uses app-server websocket / `codex --remote`. Best for controlling a local agent from another device or process without screen-scraping, but backend capabilities and security rules differ. |
+| **`remote-control`** (native remote/session capability) | Native remote surfaces. Claude Code uses `claude --remote-control` / `/remote-control` for human remote continuation; Codex uses app-server websocket / `codex --remote`. This is not automatically a chat-box transport. It is exposed only where the backend provides a programmatic turn API or where the command is explicitly about native remote session lifecycle. |
 
 The library and CLI accept a `--driver` flag (or `Session(driver="direct"|"tmux"|"remote-control")`). Sensible defaults:
 
 - `direct` for one-shot `-p`-style invocations where we just want clean output.
 - `tmux` if the request needs a local interactive TUI or human attach.
-- `remote-control` only when requested explicitly, or when a higher-level command is clearly about remote/mobile control.
+- `remote-control` only when requested explicitly for a remote/session lifecycle command or an explicit smoke-test slot; do not expose it as an interactive chat mode unless the backend can service a local prompt/response turn.
 - Explicit override always wins.
 
 ---
@@ -70,7 +70,7 @@ The library and CLI accept a `--driver` flag (or `Session(driver="direct"|"tmux"
 - Daemon that pools sessions across users.
 - Re-implementing either CLI's prompt parsing.
 - Hosting an MCP server ourselves (we *consume* both CLIs; we may expose one later).
-- Building our own TUI — we are a transport, not a UI.
+- Replacing the native Claude/Codex TUIs. The current Textual app is a yikes control surface over the shared service layer, not a reimplementation of either backend UI.
 
 ---
 
@@ -85,7 +85,7 @@ tmux gives us:
 - Sessions survive our wrapper crashing — you can attach with a real terminal and inspect.
 - Multiplexing: one tmux server can host many AI sessions on isolated sockets.
 
-tmux is not the semantic control plane when a backend exposes a structured protocol. It is the resilient local TUI fallback and the human-inspection path. Direct subprocess is the fast path for headless work, and remote-control is the native remote path.
+tmux is not the semantic control plane when a backend exposes a structured protocol. It is the resilient local TUI fallback and the human-inspection path. Direct subprocess is the fast path for headless work, and remote-control is the native remote/session path when the backend exposes a usable remote surface.
 
 ---
 

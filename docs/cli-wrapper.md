@@ -2,7 +2,7 @@
 
 The CLI is a thin shell over the Python library. It must hit two notes:
 
-1. **From a user's perspective**, the main choices are **provider** (Claude or Codex) and **driver** (`direct`, `tmux`, or `remote-control`). Everything else has a sensible default.
+1. **From a user's perspective**, the main choices are **provider** (Claude or Codex) and **mode**. For the interactive chatbot, mode is `direct` or `tmux`; `remote-control` is reserved for explicit native remote/session commands and integration test slots.
 2. **For session management** (spawn, kill, list, killall, attach), the command surface is uniform across both backends — same flags, same output, same exit codes.
 
 Native `claude` / `codex` flags are still accepted (we proxy them through), but you rarely need to set them.
@@ -18,11 +18,15 @@ Global options:
 | Flag | Description | Default |
 |---|---|---|
 | `-b`, `--backend {claude,codex}` | Which CLI to drive. | `claude` |
-| `-d`, `--driver {direct,tmux,remote-control,auto}` | How to drive it. | `auto` |
+| `-d`, `--driver {direct,tmux,remote-control,auto}` | How to drive it. Interactive chat accepts `direct`/`tmux`; `remote-control` is for explicit remote/session commands. | `auto` |
 | `-s`, `--session NAME_OR_ID` | Operate on a specific session. | (new) |
 | `--socket PATH_OR_NAME` | tmux socket path/name, only for `tmux`. | `~/.yikes/tmux/default.sock` |
 | `--remote ADDR_OR_NAME` | Remote-control endpoint/name, only for `remote-control`. | backend default |
 | `--cwd PATH` | Working dir for spawned sessions. | `$PWD` |
+| `--web-search / --no-web-search` | Enable or disable web search for the agent config. | enabled |
+| `--read-dir PATH` | Add a directory the agent may read. Repeatable. | none |
+| `--write-dir PATH` | Add a directory the agent may write. Repeatable. | none |
+| `--mcp "name=command args..."` | Attach an MCP server. Repeatable. | none |
 | `--no-color` | Strip ANSI from output. | off |
 | `-v`, `--verbose` | Engine-level logs. | off |
 | `--json` | Machine-readable output (NDJSON). | off |
@@ -55,6 +59,17 @@ flowchart LR
 ```
 
 ## Commands
+
+## Current implemented slice
+
+The current package implements:
+
+- `yikes` / `yikes tui`: a Textual chatbot control surface, default when no arguments are passed.
+- `yikes chat-smoke`: an end-to-end chatbot smoke flow across backend/driver combinations.
+- Shared slash-command registry with autocomplete for `/model`, `/models`, `/backend`, `/driver`, `/mode`, `/complexity`, `/web`, `/dirs`, `/mcp`, `/restart`, and `/exit`.
+- Persisted app state in `~/.config/yikes/state.json` covering backend, chat mode, model, complexity, web search, read/write directories, and MCP servers.
+
+The command set below is still the larger target CLI design.
 
 ### `yikes ask` — one-shot, headless
 

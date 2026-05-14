@@ -125,7 +125,7 @@ These six combinations are first-class test targets:
 
 | Backend | `direct` | `tmux` | `remote-control` |
 |---|---|---|---|
-| Claude Code | `claude -p --output-format stream-json`, plus bidirectional stream-json where supported | `claude` in a managed tmux pane | `claude --remote-control [name]` or `/remote-control`, surfaced through claude.ai / mobile |
+| Claude Code | `claude -p --output-format stream-json`, plus bidirectional stream-json where supported | `claude` in a managed tmux pane | `claude --remote-control [name]` or `/remote-control`, surfaced through claude.ai / mobile; yikes treats this as lifecycle/status until Claude exposes a programmatic turn API |
 | Codex CLI | `codex app-server --listen stdio://` by default, `codex exec --json` for one-shot | `codex --no-alt-screen` in a managed tmux pane | `codex app-server --listen ws://...` plus API/websocket client or `codex --remote ws://...` |
 
 ## Data flow — `tmux` driver
@@ -295,6 +295,36 @@ class TurnComplete(Event):
 ```
 
 See [Streaming & Updates](streaming.md) for how `StreamDelta` vs `LineRevised` get emitted and how a caller can choose to consume either or both.
+
+## Command registry and suggestions
+
+Slash commands are a shared capability, not a terminal-only feature. The canonical command surface lives in a `CommandRegistry` that exposes:
+
+- command metadata: name, usage, aliases, and description
+- execution: the same handler path for TUI, CLI, and future web calls
+- suggestions: prefix completion for commands and argument completion for command-specific values
+- preview hints: commands such as `/models` can show contextual options before Enter is pressed
+
+Model names and other contextual arguments come from provider registries. The UI must not hardcode `/model`, `/models`, `/backend`, `/driver`, `/web`, `/dirs`, or `/mcp` choices; it asks registries for valid options for the active backend and driver. As backend adapters mature, those providers should prefer live capability discovery or backend-reported metadata, with static defaults used only as a fallback.
+
+The intended behavior is broader than model selection: every slash command that accepts constrained arguments should register its own suggestion provider. This lets the Textual app autocomplete commands today and lets a web backend later return the same suggestions over HTTP or websocket.
+
+## Persisted app state
+
+The terminal app persists the user's last interactive choices in a small JSON state file:
+
+- backend
+- connection mode / driver
+- model
+- complexity level
+- web search enabled/disabled
+- readable directories
+- writable directories
+- attached MCP servers
+
+The default path is `~/.config/yikes/state.json`, with `YIKES_STATE_PATH` available for tests and isolated runs. This state is part of the app shell, not the transcript: restarting yikes restores how the user wants to connect and reason, but it does not silently restore previous chat messages.
+
+Interactive chat drivers are intentionally limited to transports that can service a local prompt/response turn. Remote-control remains a backend/session capability for future lifecycle commands and explicit integration tests, but it is not exposed as an interactive chat mode unless the backend provides a programmatic turn API.
 
 ## Concurrency model
 

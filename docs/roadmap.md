@@ -29,8 +29,8 @@ gantt
     codex app-server adapter      :p4a, after p3c, 4d
     Turn cancellation             :p4b, after p4a, 2d
     section Phase 5
-    remote-control driver         :p5a, after p4b, 4d
-    six-mode smoke matrix         :p5b, after p5a, 2d
+    remote lifecycle adapters     :p5a, after p4b, 4d
+    six-slot smoke matrix         :p5b, after p5a, 2d
     section Phase 6
     yikes attach / logs           :p6a, after p5b, 2d
     Transcript replay & reconnect :p6b, after p6a, 3d
@@ -132,16 +132,16 @@ yikes -b codex run -s <id> "long task"
 yikes -b codex cancel <id>      # uses turn/interrupt
 ```
 
-## Phase 5 — Remote-control driver + six-mode smoke matrix (≈6 days)
+## Phase 5 — Remote lifecycle + six-slot smoke matrix (≈6 days)
 
-**Goal:** `remote-control` is first-class for both backends, and every backend/driver combination has a smoke test.
+**Goal:** native remote-control is represented honestly per backend, and every backend/driver test slot remains explicit.
 
 - `yikes.drivers.remote_control` shared interface and state model.
-- Claude Remote Control adapter: `claude --remote-control [name]`, status parsing, local-process lifecycle, remote metadata.
+- Claude Remote Control adapter: `claude --remote-control [name]`, status parsing, local-process lifecycle, remote metadata. This is lifecycle/status support for Claude's human remote UI, not a yikes prompt/response chat transport.
 - Codex websocket adapter: `codex app-server --listen ws://...`, loopback default, websocket auth requirements for non-loopback, direct JSON-RPC over websocket.
 - `yikes remote` command.
 - Attachment/path validation for remote hosts.
-- Six-mode smoke matrix:
+- Six-slot smoke matrix:
   - `claude/direct`
   - `claude/tmux`
   - `claude/remote-control`
@@ -154,7 +154,7 @@ yikes -b codex cancel <id>      # uses turn/interrupt
 ```bash
 yikes -b claude -d direct ask "ping"
 yikes -b claude -d tmux run "ping"
-yikes -b claude -d remote-control remote --name smoke
+yikes -b claude -d remote-control remote --name smoke     # lifecycle/status; chatbot fallback remains explicit
 yikes -b codex -d direct ask "ping"
 yikes -b codex -d tmux run "ping"
 yikes -b codex -d remote-control remote --listen 127.0.0.1:0
@@ -167,11 +167,11 @@ yikes -b codex -d remote-control remote --listen 127.0.0.1:0
 - `yikes logs <id>` with `--follow`, `--since`, `--format`.
 - Transcript replay: a second process attaching to a running session sees backfilled history then live events.
 - `Manager.get(name_or_id)` works across process boundaries (state in `~/.yikes/`).
-- Distribution: `pip install yikes`; binary entry point `yikes`.
+- Development setup: `poetry install`; binary entry point `yikes`.
 - Docs site published.
 - Example notebooks: parallel sessions, cost tracking, structured-output extraction.
 
-**Acceptance:** Fresh checkout → `pip install -e .` → `yikes ask hello` works.
+**Acceptance:** Fresh checkout → `poetry install` → `poetry run yikes ask hello` works.
 
 ## Beyond v1
 

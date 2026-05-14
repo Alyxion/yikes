@@ -4,8 +4,8 @@ Two backends are supported in v1: **Claude Code** and **Codex CLI**. Each one ha
 
 | Backend | Native interactive entry | Native headless entry | Native programmatic entry | Native remote-control entry | Default driver |
 |---|---|---|---|---|---|
-| Claude Code | `claude` (REPL) | `claude -p ... --output-format stream-json` | (same, scripted) | `claude --remote-control [name]` | `direct` for headless, `tmux` for local TUI, `remote-control` on request |
-| Codex | `codex` (Ratatui TUI) | `codex exec ... --json` | `codex app-server` (JSON-RPC) | `codex app-server --listen ws://...` / `codex --remote ws://...` | `direct` (app-server) for structured ops, `tmux` for local TUI, `remote-control` on request |
+| Claude Code | `claude` (REPL) | `claude -p ... --output-format stream-json` | (same, scripted) | `claude --remote-control [name]` | `direct` for headless, `tmux` for local TUI; remote-control is human remote continuation, not yikes chat transport |
+| Codex | `codex` (Ratatui TUI) | `codex exec ... --json` | `codex app-server` (JSON-RPC) | `codex app-server --listen ws://...` / `codex --remote ws://...` | `direct` (app-server/exec) for structured ops, `tmux` for local TUI; remote-control is explicit remote/session work |
 
 Read each backend page for details:
 

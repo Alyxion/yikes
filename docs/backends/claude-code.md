@@ -170,7 +170,7 @@ Remote-control mode is a native remote-human workflow, not a terminal byte strea
 - Some local-only slash commands and terminal pickers are not available remotely.
 - We do not infer approvals by sending raw `y` keystrokes in this mode; approvals are handled by Claude's remote UI.
 
-For automated structured output, use `direct`. For local TUI attach, use `tmux`. For remote/mobile continuation, use `remote-control`.
+For automated structured output, use `direct`. For local TUI attach or local prompt automation, use `tmux`. For remote/mobile continuation by a human through Claude's own remote UI, use Claude remote-control lifecycle commands. Do not model Claude remote-control as a yikes chat transport unless Claude exposes a documented programmatic turn API.
 
 ## Adapter responsibilities
 

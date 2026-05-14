@@ -7,6 +7,28 @@ The library is the canonical face. The CLI is a thin shell over it (so behaviour
 
 ## Surface at a glance
 
+Current synchronous chatbot slice:
+
+```python
+from pathlib import Path
+from yikes import AgentSettings, Backend, ChatService, Driver, McpServer
+
+settings = AgentSettings(
+    web_search_enabled=True,
+    read_roots=(Path("docs"),),
+    write_roots=(Path("tmp"),),
+    mcp_servers=(McpServer("fs", "python", ("-m", "server")),),
+)
+conversation = ChatService().create_conversation(
+    Backend.CLAUDE,
+    Driver.DIRECT,
+    settings=settings,
+)
+answer = conversation.ask("Hello, my name is Michael. How are you doing?")
+```
+
+Larger target async session surface:
+
 ```python
 import asyncio
 from yikes import Session, Backend, Driver, events
