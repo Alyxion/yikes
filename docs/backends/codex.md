@@ -1,6 +1,6 @@
 # Backend: Codex CLI
 
-The Codex adapter (`yikes.backends.codex`) drives the `codex` binary. Codex has three useful entry points; the adapter picks based on driver and request:
+The Codex adapter (`yikes.backends.codex`) drives the `codex` binary. Codex has four useful entry points; the adapter picks based on driver and request:
 
 ```mermaid
 flowchart LR
@@ -8,6 +8,7 @@ flowchart LR
     mode -->|tmux| tui["codex (TUI)<br/>inside tmux pane"]
     mode -->|direct, long-lived| as["codex app-server<br/>(JSON-RPC stdio)"]
     mode -->|direct, one-shot| ex["codex exec --json<br/>(NDJSON)"]
+    mode -->|remote-control| rc["codex app-server websocket<br/>or codex --remote"]
 ```
 
 **Default for `direct`** is `codex app-server` — it gives token-level deltas, supports turn cancellation, and is the canonical programmatic interface. `codex exec --json` is a fallback for genuinely single-shot scripted runs.
@@ -23,6 +24,7 @@ flowchart LR
 | Resume | `codex resume --last` / `codex resume <SESSION_ID>` / `codex exec resume --last` |
 | Fork | `codex fork` (interactive only — for the equivalent in `direct` mode, use `thread/fork` JSON-RPC) |
 | Programmatic | `codex app-server --listen stdio://` |
+| Remote app-server | `codex app-server --listen ws://127.0.0.1:<port>` plus `codex --remote ws://...` or our websocket client |
 | Codex as MCP server | `codex mcp-server` (we don't use this for v1) |
 
 ### Input
@@ -71,8 +73,8 @@ flowchart TB
         tf2["thread/fork"]
         tl["thread/list"]
         turn["turn/start"]
-        cancel["turn/cancel"]
-        approve["approval/respond"]
+        steer["turn/steer"]
+        interrupt["turn/interrupt"]
     end
     subgraph notif[Notifications we consume]
         ns["turn/started"]
@@ -83,7 +85,8 @@ flowchart TB
         nt["turn/completed"]
         nf["turn/failed"]
         ne["error"]
-        napprove["approval/requested"]
+        sreq["server requests:<br/>item/commandExecution/requestApproval<br/>item/fileChange/requestApproval"]
+        sres["serverRequest/resolved"]
     end
 ```
 
@@ -105,7 +108,8 @@ We check these into the repo and codegen Python dataclasses from them at build t
 | `item.started`/`completed` with `commandExecution` | `ToolUse` + `ToolResult` |
 | `item.completed` with `fileChange` | `ToolUse(tool="FileChange", input={diff})` |
 | `item.completed` with `mcpToolCall` | `ToolUse(tool=f"mcp__{server}__{name}")` |
-| `approval/requested` | `ApprovalRequest` |
+| `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` | `ApprovalRequest` with `threadId`, `turnId`, `itemId`, and request id |
+| `serverRequest/resolved` | clears pending `ApprovalRequest` |
 | `turn/completed` | `TurnComplete(stop_reason, usage)` |
 | `turn/failed`, `error` | `TurnFailed(reason)` |
 
@@ -197,11 +201,14 @@ Then over stdio:
 {"id":0,"result":{"serverInfo":{"name":"codex","version":"0.130.x"},
                    "capabilities":{...}}}
 
+// → notification
+{"method":"initialized","params":{}}
+
 // → start a thread (cwd, model, approval policy, sandbox)
 {"id":1,"method":"thread/start",
  "params":{"model":"gpt-5.5","cwd":"/Users/x/proj",
            "approvalPolicy":"never","sandbox":"workspace-write"}}
-// ← {"id":1,"result":{"threadId":"thr_..."}}
+// ← {"id":1,"result":{"thread":{"id":"thr_..."}}}
 
 // → start a turn
 {"id":2,"method":"turn/start",
@@ -220,19 +227,41 @@ Then over stdio:
 
 | Operation | JSON-RPC |
 |---|---|
-| Cancel current turn | `turn/cancel` with current `threadId` |
-| Respond to approval | `approval/respond` with `requestId` + decision |
+| Cancel current turn | `turn/interrupt` with current `threadId` / active turn context |
+| Steer current turn | `turn/steer` with current `threadId` and extra input |
+| Respond to command approval | JSON-RPC response to `item/commandExecution/requestApproval` with `accept`, `acceptForSession`, `decline`, `cancel`, or an exec-policy amendment |
+| Respond to file approval | JSON-RPC response to `item/fileChange/requestApproval` with `accept`, `acceptForSession`, `decline`, or `cancel` |
 | Fork at a turn | `thread/fork` |
 | Resume by ID | `thread/resume` |
 | List sessions | `thread/list` (paginated; filter by `cwd`, dates) |
 
 ### Backpressure
 
-Server returns JSON-RPC error code `-32001` "Server overloaded; retry later" when overloaded. The adapter retries with exponential backoff.
+Server returns JSON-RPC error code `-32001` "Server overloaded; retry later" when overloaded. The adapter retries with exponential backoff and jitter. Websocket mode also has bounded outbound queues, so the remote-control driver must drain events promptly and reconnect/reconcile state if the transport drops.
 
 ### Capability negotiation
 
 During `initialize`, set `capabilities.optOutNotificationMethods` to silence noisy event types (e.g. periodic status heartbeats).
+
+## Driving Codex in **remote-control mode**
+
+Remote-control mode uses Codex's app-server websocket transport instead of screen-scraping the TUI:
+
+```bash
+codex app-server --listen ws://127.0.0.1:4500
+codex --remote ws://127.0.0.1:4500 --no-alt-screen
+```
+
+For programmatic yikes control, the remote driver connects directly to the websocket and speaks the same JSON-RPC protocol as direct mode. For human remote attach, it can print or launch a `codex --remote ...` command.
+
+Security defaults:
+
+- Prefer loopback listeners and SSH port forwarding.
+- If binding non-loopback, require explicit websocket auth (`--ws-auth capability-token --ws-token-file ...` or signed bearer token flags).
+- Never put raw bearer tokens in process arguments, logs, or transcripts.
+- Treat websocket transport as experimental until Codex marks it stable.
+
+Remote path caveat: stock `codex --remote --cd <path>` has historically validated `--cd` on the client side. The yikes websocket client should send remote `cwd` in `thread/start` / `turn/start` instead of depending on local CLI validation, and should reject local-only image/path attachments unless it can copy them to the remote host.
 
 ## Driving Codex in **direct mode (`exec --json`)**
 
@@ -266,11 +295,26 @@ Parse NDJSON; emit engine events.
 
 The yikes engine forwards `CODEX_API_KEY` and lets `CODEX_HOME` be customised per session via `SessionOptions.env`.
 
+## Version pinning and update behaviour
+
+Codex has manual updates via `codex update`. Distribution method varies: the npm-published `@openai/codex` checks for new versions on launch and prompts; the Rust binary distributed via the repo doesn't auto-install but can still be auto-updated by package managers (`brew upgrade`, etc.). Either way, the JSON event schema has churned across releases (`item_type` → `type`, [issue #4776](https://github.com/openai/codex/issues/4776)) and our parser is sensitive to that.
+
+The mitigation is the same as for Claude Code:
+
+1. **Generated schema, checked in.** Run `codex app-server generate-json-schema` at build time and check the result into `_generated/`. Dataclasses are derived from this snapshot, not hand-rolled.
+2. **Version probe on spawn.** Capture `codex --version`; warn if newer than tested.
+3. **Pinned fixtures.** `tests/fixtures/codex/<version>/` with recorded `exec --json` and `app-server` byte streams.
+4. **Pin in CI.** Install an exact version (`npm install -g @openai/codex@<pinned>` or fetch a specific GitHub release).
+5. **Suppress the prompt-on-launch update nag** by passing `--no-update-check` if/when that flag stabilises (currently inconsistent across versions — verify in `codex --help` for the version you're targeting). If unavailable, dismiss programmatically by waiting for the prompt sentinel and ignoring the nag region.
+
+We do **not** disable user-level auto-update for the codex binary itself — there's no equivalent of `DISABLE_AUTOUPDATER=1`. The defence is purely on our side (probe + fixtures + pinned CI).
+
 ## Known gotchas
 
 - **`--full-auto` is deprecated.** Use explicit `--sandbox` + `--ask-for-approval`.
 - **JSON event schema has churned** (`item_type` → `type`). We generate types from `codex app-server generate-json-schema` rather than hand-coding.
 - **TUI uses alternate screen by default.** Pass `--no-alt-screen` in tmux mode.
 - **AGENTS.md discovery order:** `AGENTS.override.md` → `AGENTS.md` → fallbacks, root-down concatenation. The adapter doesn't touch this; it's Codex's job.
-- **Approval prompts in TUI** are rendered as a BottomPane modal. We detect them via pyte by looking for the known frame layout in the bottom rows; for `app-server` we get `approval/requested` notifications directly.
+- **Approval prompts in TUI** are rendered as a BottomPane modal. We detect them via pyte by looking for the known frame layout in the bottom rows; for `app-server` we get server-initiated request methods such as `item/commandExecution/requestApproval` and answer that exact JSON-RPC request.
+- **Websocket app-server is remote-control, not the default direct path.** Keep stdio as the stable local direct transport; use websocket only when remote attach/control is requested.
 - **Rollout files become `.zst`** in recent builds. We don't read them; we just record the session ID and let `codex resume` handle it.

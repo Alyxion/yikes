@@ -8,6 +8,7 @@ The tmux driver is what makes "run claude/codex via tmux" real. It owns the life
 2. **Stable IDs over names.** Always target by `$<n>` (session), `@<n>` (window), `%<n>` (pane). Names change; IDs don't.
 3. **Hybrid I/O.** **Control mode** (`tmux -C attach`) for the event substrate (low-latency `%output` notifications), **`capture-pane`** for on-demand snapshots, **`send-keys` / `paste-buffer`** for input.
 4. **One pyte per pane.** The VT emulator runs in our process and consumes `%output` bytes; we never re-parse from tmux's grid (which is already collapsed).
+5. **One stream tap per observed pane.** A control-mode client only receives `%output` for the session/window it is attached to. The driver can keep one tmux server, but it must open one control client per live session that needs streaming.
 
 ## Topology
 
@@ -15,7 +16,8 @@ The tmux driver is what makes "run claude/codex via tmux" real. It owns the life
 flowchart TB
     subgraph yikes[yikes process]
         engine[Engine]
-        ctl["TmuxControl<br/>(-C attach)"]
+        ctl_a["TmuxControl A<br/>(-C attach -t $0)"]
+        ctl_b["TmuxControl B<br/>(-C attach -t $1)"]
         libtmux["libtmux<br/>(commands)"]
         pyte_a[pyte Screen A]
         pyte_b[pyte Screen B]
@@ -26,18 +28,21 @@ flowchart TB
     end
 
     engine --> libtmux
-    engine --> ctl
+    engine --> ctl_a
+    engine --> ctl_b
     libtmux -->|send-keys, paste-buffer,<br/>capture-pane, new-session| tmuxserver
-    ctl <-->|%output, %window-*, ...| tmuxserver
-    s1 -. bytes .-> ctl
-    s2 -. bytes .-> ctl
-    ctl --> pyte_a
-    ctl --> pyte_b
+    ctl_a <-->|%output, %window-*, ...| tmuxserver
+    ctl_b <-->|%output, %window-*, ...| tmuxserver
+    s1 -. bytes .-> ctl_a
+    s2 -. bytes .-> ctl_b
+    ctl_a --> pyte_a
+    ctl_b --> pyte_b
     pyte_a --> engine
     pyte_b --> engine
 ```
 
-- One long-lived `tmux -C attach` subprocess multiplexes notifications from **all** panes on our socket.
+- One dedicated tmux server owns all managed sessions.
+- One `tmux -C attach -t <session-id>` subprocess is opened per pane/session that needs live streaming. A single control client does **not** multiplex output from inactive sessions; it only emits `%output` for the session it is currently attached to.
 - `libtmux` issues commands (low frequency, synchronous request/response).
 - Each pane gets its own pyte `Screen` in our process; pyte's `dirty` set drives our `LineRevised` events.
 
@@ -68,7 +73,7 @@ The tmux driver presents this internal API:
 
 ```python
 class TmuxDriver(Driver):
-    socket_name: str = "yikes"          # tmux -L yikes
+    socket_path: Path = Path.home() / ".yikes" / "tmux" / "default.sock"
     base_config: Path = Path("/dev/null")
 
     async def spawn(self, *, name: str, argv: list[str],
@@ -103,17 +108,22 @@ This is what gets called by both `claude` and `codex` adapters when their driver
 `/dev/null` config + explicit options keeps the wrapper deterministic regardless of the user's tmux config:
 
 ```bash
-tmux -L yikes -f /dev/null new-session -d -s ai_$$ -x 200 -y 50 \
+tmux -S ~/.yikes/tmux/default.sock -f /dev/null new-session -d -s ai_$$ -x 200 -y 50 \
     -P -F '#{session_id} #{pane_id}' \
     -e TERM=tmux-256color \
+    -e LANG=en_US.UTF-8 \
+    -e LC_CTYPE=en_US.UTF-8 \
+    -c "$PWD" \
     "claude"
 
-tmux -L yikes set -g default-terminal "tmux-256color"
-tmux -L yikes set -g status off
-tmux -L yikes set -g history-limit 100000
-tmux -L yikes set -as terminal-features ',xterm*:sync'   # pass-through DECSET 2026
-tmux -L yikes set -g extended-keys off                    # avoid csi-u paste bug
+tmux -S ~/.yikes/tmux/default.sock set -g default-terminal "tmux-256color"
+tmux -S ~/.yikes/tmux/default.sock set -g status off
+tmux -S ~/.yikes/tmux/default.sock set -g history-limit 100000
+tmux -S ~/.yikes/tmux/default.sock set -as terminal-features ',xterm*:sync'   # pass-through DECSET 2026
+tmux -S ~/.yikes/tmux/default.sock set -g extended-keys off                    # avoid csi-u paste bug
 ```
+
+Use `-S` with a socket path under a `0700` `~/.yikes/tmux/` directory by default. `-L yikes` remains a debugging shorthand, but a fixed global socket name collides across projects, users running multiple yikes versions, and stale servers.
 
 !!! danger "Why this matters"
     With `extended-keys-format csi-u` enabled (a common modern tmux setting), CR/LF inside a bracketed paste block gets re-encoded as CSI-u sequences that Claude Code's paste tokeniser silently drops — collapsing your multi-line prompt to a single line ([claude-code#43169](https://github.com/anthropics/claude-code/issues/43169)).
@@ -180,21 +190,23 @@ The alternative is polling `capture-pane`. Bad idea:
 - `capture-pane` returns the *current rendered grid*. Spinner redraws have collapsed by the time we look. We lose intermediate tokens.
 - Each `capture-pane` is a fork+exec — ~5–12 ms — so polling at 20 Hz costs a CPU.
 
-Control mode (`tmux -C attach`) delivers `%output %P data` notifications as bytes are written, with one persistent subprocess for the whole socket. We never miss intermediate state, and the cost is one open pipe.
+Control mode (`tmux -C attach -t <session-id>`) delivers `%output %P data` notifications as bytes are written for the attached session. We never miss intermediate state for that pane, and the cost is one open pipe per observed session.
+
+The important limitation: control mode follows the attached client. In a server with sessions `$0` and `$1`, a control client attached to `$0` sees `%output %0 ...`; it will not also see `%output %1 ...` until it switches to `$1`, at which point it stops seeing `%0`. The implementation therefore treats a control-mode subprocess as a **stream tap**, not as a global bus.
 
 ### The reader loop
 
 ```python
 async def _reader(self):
-    """Run for the lifetime of the driver."""
+    """Run for the lifetime of one observed pane/session."""
     async for line in self.proc.stdout:
         line = line.rstrip(b'\r\n')
         match line.split(b' ', 2):
             case [b'%output', pane, payload]:
                 data = decode_octal(payload)
                 await self._panes[pane.decode()].feed(data)
-            case [b'%window-close', wid, *_]:
-                await self._on_pane_close(wid.decode())
+            case [b'%window-close' | b'%pane-exited', target, *_]:
+                await self._on_pane_close(target.decode())
             case [b'%pause', wid]:
                 await self._panes[wid.decode()].on_pause()
             case [b'%continue', wid]:
@@ -209,20 +221,20 @@ async def _reader(self):
 
 ### Flow control via `refresh-client`
 
-For high-throughput streams (long agent reasoning, large diff dumps) we set:
+For high-throughput streams (long agent reasoning, large diff dumps) we set this on every stream tap:
 
 ```
 refresh-client -f pause-after=30
 ```
 
-so a slow consumer gets a `%pause` event instead of unbounded buffering, then `refresh-client -A '%P:continue'` to resume.
+so a slow consumer gets a `%pause` event instead of unbounded buffering, then `refresh-client -A '%P:continue'` to resume that pane's tap.
 
 ### Snapshots
 
 `snapshot()` calls `capture-pane`:
 
 ```bash
-tmux -L yikes capture-pane -p -e -J -S - -E - -t %0
+tmux -S ~/.yikes/tmux/default.sock capture-pane -p -e -J -S - -E - -t %0
 ```
 
 - `-p` print to stdout
@@ -240,22 +252,25 @@ The tmux driver implements all of these against our socket. The adapter contribu
 
 ```bash
 # Spawn (claude)
-tmux -L yikes new-session -d -s yikes-claude-3f9 -x 200 -y 50 \
+tmux -S ~/.yikes/tmux/default.sock new-session -d -s yikes-claude-3f9 -x 200 -y 50 \
     -e YIKES_BACKEND=claude -e YIKES_NATIVE_ID=abc123 \
     -e YIKES_MODEL=opus -e YIKES_CWD=/Users/x/proj \
+    -c /Users/x/proj \
     "claude --resume abc123"
 
 # List
-tmux -L yikes list-sessions -F '#{session_id} #{session_name} #{?#{==:#{E:YIKES_BACKEND},claude},claude,codex} #{E:YIKES_MODEL}'
+tmux -S ~/.yikes/tmux/default.sock list-sessions -F '#{session_id} #{session_name} #{E:YIKES_BACKEND} #{E:YIKES_MODEL}'
 
 # Kill one
-tmux -L yikes kill-session -t '$3'
+tmux -S ~/.yikes/tmux/default.sock kill-session -t '$3'
 
 # Kill all (whole server on our socket)
-tmux -L yikes kill-server
+tmux -S ~/.yikes/tmux/default.sock kill-server
 ```
 
 Pane environment is propagated to the child via `-e KEY=VALUE`. We use this to tag sessions with their backend and native session ID so `yikes list` can show them.
+
+The command string passed to `new-session` is built from argv with shell-safe quoting (`shlex.join(argv)` in Python). Prompts are not embedded in the spawn command; the adapter waits for readiness and then pastes user content through `send_text()`.
 
 ## Pitfalls — checklist
 
@@ -266,11 +281,16 @@ Pane environment is propagated to the child via `-e KEY=VALUE`. We use this to t
 | Default 80×24 pane reflows TUI | `new-session -x 200 -y 50` + `resize-window -A` to lock. |
 | Client attaching changes pane size | Use `resize-window -A` for sticky size. |
 | `~/.tmux.conf` interferes | `-f /dev/null` and our explicit `set -g` lines. |
+| Fixed `-L yikes` socket collides or attaches to stale server | Default to `-S ~/.yikes/tmux/<instance>.sock`, create parent dir `0700`, verify owner and socket metadata. |
+| tmux control client misses output from other sessions | Open one control-mode stream tap per observed session; do not rely on one global `tmux -C attach`. |
 | Decoding `%output` payloads | Octal-unescape `\NNN` and `\134` for backslash before feeding pyte. |
 | `pipe-pane -o` toggle in scripts | Always explicit start/stop, never toggle. |
 | Echo race (our input shows up in output stream) | We track `send_text` calls and filter the echoed bytes by offset, or set `stty -echo` for non-TUI commands. |
 | Sending before TUI is ready | Sentinel-wait; never sleep arbitrarily. |
 | TUI uses alternate screen → scrollback lost | Pass `--no-alt-screen` to codex; Claude Code already uses primary screen for most output. |
+| Approving the wrong modal after a redraw | Re-read the bottom rows immediately before sending approval keys and compare against the stored prompt fingerprint. |
+| Remote/local path mismatch for images and `@path` references | Resolve paths on the machine where the AI process runs; copy or reject local-only paths before pasting. |
+| UTF-8 and wide glyph drift between tmux and pyte | Set `LANG`/`LC_CTYPE`, test wide glyph fixtures, and verify `tmux-256color` terminfo exists. |
 | Subprocess fork overhead for `capture-pane` polling | Don't poll — use `%output`. `capture-pane` only for on-demand snapshots. |
 
 ## When the driver gives up

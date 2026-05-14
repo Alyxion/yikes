@@ -29,9 +29,12 @@ gantt
     codex app-server adapter      :p4a, after p3c, 4d
     Turn cancellation             :p4b, after p4a, 2d
     section Phase 5
-    yikes attach / logs           :p5a, after p4b, 2d
-    Transcript replay & reconnect :p5b, after p5a, 3d
-    Docs, examples, packaging     :p5c, after p5b, 4d
+    remote-control driver         :p5a, after p4b, 4d
+    six-mode smoke matrix         :p5b, after p5a, 2d
+    section Phase 6
+    yikes attach / logs           :p6a, after p5b, 2d
+    Transcript replay & reconnect :p6b, after p6a, 3d
+    Docs, examples, packaging     :p6c, after p6b, 4d
 ```
 
 ## Phase 0 — Scaffolding (≈3 days)
@@ -71,7 +74,7 @@ yikes ask --json "..." | jq 'select(.type=="turn_complete")'
 **Goal:** Sessions you can spawn, list, kill, killall, attach to. No streaming yet — that's Phase 3.
 
 - `yikes.drivers.tmux` — socket isolation, `new-session`, `kill-session`, `kill-server`, `capture-pane`, `send-keys`, `paste-buffer`.
-- `TmuxControl` — long-lived `tmux -C attach` subprocess; notification reader; pause/continue support.
+- `TmuxControl` — one `tmux -C attach -t <session-id>` stream tap per observed session; notification reader; pause/continue support.
 - `yikes.engine.vt` — pyte wrapper, dirty-line differ, block tracker.
 - `LineRevised` and `StreamDelta` events from the pyte pipeline.
 - CLI: `yikes spawn`, `yikes ps`, `yikes kill`, `yikes killall`, `yikes attach`.
@@ -114,9 +117,10 @@ Replay-test corpus: recorded byte streams from real Claude/Codex TUIs covering p
 **Goal:** Codex's structured programmatic interface is wired up; we prefer it over `exec --json` for direct ops.
 
 - JSON-RPC client over stdio.
-- `initialize`, `thread/start`, `thread/resume`, `thread/list`, `thread/fork`, `turn/start`, `turn/cancel`, `approval/respond`.
-- Notification handling for `item/agentMessage/delta`, `item/reasoning/delta`, `item/completed`, `turn/completed`, `turn/failed`, `approval/requested`.
-- `Session.cancel()` and `Turn.cancel()` wired to `turn/cancel`.
+- `initialize` + `initialized`, `thread/start`, `thread/resume`, `thread/list`, `thread/fork`, `turn/start`, `turn/steer`, `turn/interrupt`.
+- Notification handling for `item/agentMessage/delta`, `item/reasoning/delta`, `item/completed`, `turn/completed`, `turn/failed`.
+- Server request handling for `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, and `serverRequest/resolved`.
+- `Session.cancel()` and `Turn.cancel()` wired to `turn/interrupt`.
 - `yikes ps` includes Codex sessions via `thread/list`.
 
 **Acceptance:**
@@ -125,10 +129,38 @@ Replay-test corpus: recorded byte streams from real Claude/Codex TUIs covering p
 yikes -b codex spawn --use-app-server
 yikes -b codex run -s <id> "long task"
 # in another shell:
-yikes -b codex cancel <id>      # uses turn/cancel
+yikes -b codex cancel <id>      # uses turn/interrupt
 ```
 
-## Phase 5 — Attach, logs, replay, packaging (≈9 days)
+## Phase 5 — Remote-control driver + six-mode smoke matrix (≈6 days)
+
+**Goal:** `remote-control` is first-class for both backends, and every backend/driver combination has a smoke test.
+
+- `yikes.drivers.remote_control` shared interface and state model.
+- Claude Remote Control adapter: `claude --remote-control [name]`, status parsing, local-process lifecycle, remote metadata.
+- Codex websocket adapter: `codex app-server --listen ws://...`, loopback default, websocket auth requirements for non-loopback, direct JSON-RPC over websocket.
+- `yikes remote` command.
+- Attachment/path validation for remote hosts.
+- Six-mode smoke matrix:
+  - `claude/direct`
+  - `claude/tmux`
+  - `claude/remote-control`
+  - `codex/direct`
+  - `codex/tmux`
+  - `codex/remote-control`
+
+**Acceptance:**
+
+```bash
+yikes -b claude -d direct ask "ping"
+yikes -b claude -d tmux run "ping"
+yikes -b claude -d remote-control remote --name smoke
+yikes -b codex -d direct ask "ping"
+yikes -b codex -d tmux run "ping"
+yikes -b codex -d remote-control remote --listen 127.0.0.1:0
+```
+
+## Phase 6 — Attach, logs, replay, packaging (≈9 days)
 
 **Goal:** Production polish.
 
@@ -147,7 +179,7 @@ Not in v1, but worth tracking:
 
 - **Web UI / IDE plugin** — the engine's event bus makes a WebSocket bridge trivial.
 - **MCP server face** — expose `yikes.spawn`/`yikes.list`/`yikes.cancel` as MCP tools so the AI can drive itself recursively (carefully).
-- **Multi-machine sessions** — tmux already works over SSH; the driver could target a remote socket.
+- **Multi-machine sessions** — remote-control paths and Codex websocket app-server are preferred. tmux over SSH remains an escape hatch, but we do not expose tmux sockets over the network.
 - **Recording & playback** — capture the full byte stream as asciinema-style typescript for later replay.
 - **Cost-aware scheduling** — pick the cheapest backend that can handle a task.
 - **Cross-backend routing** — same prompt, two backends, compare results.
@@ -157,7 +189,7 @@ Not in v1, but worth tracking:
 These need a decision before the corresponding phase starts.
 
 ### Q1. Auto driver selection — heuristic or explicit?
-**Recommendation:** heuristic by command (`ask`→`direct`, `run`/`shell`→`tmux`, `spawn`→`tmux`); explicit `--driver` always wins.
+**Recommendation:** heuristic by command (`ask`→`direct`, `run`/`shell`→`tmux`, `spawn`→`tmux`, `remote`→`remote-control`); explicit `--driver` always wins. Do not silently select `remote-control` for normal local work.
 **Decision needed by:** Phase 1.
 
 ### Q2. Codex app-server vs exec --json — which is the default `direct` for Codex?
@@ -195,6 +227,31 @@ These need a decision before the corresponding phase starts.
 ### Q10. What's the minimum tmux version we support?
 **Recommendation:** 3.4+ for DECSET 2026 pass-through and `terminal-features ',xterm*:sync'`. Older versions degrade gracefully to quiet-period coalescing.
 **Decision needed by:** Phase 2.
+
+### Q11. How do we handle backend version drift?
+Both Claude Code and Codex change their event schemas and TUI layouts between releases. Claude Code auto-updates silently by default; Codex prompts to update. Either can break our `stream-json` parser, approval-prompt detection, or `app-server` notification handling overnight.
+
+**Recommendation:**
+
+- **Disable Claude Code's auto-updater for yikes-spawned processes** by injecting `DISABLE_AUTOUPDATER=1` into the child env. User's interactive `claude` outside yikes is unaffected.
+- **Generate Codex types at build time** from `codex app-server generate-json-schema`; check the snapshot into `_generated/`.
+- **Version probe on spawn** for both backends. Emit a `Notice` warning when the installed version is newer than the highest fixture set we ship.
+- **Replay fixtures in CI** per backend per version. Adding support for a new version means recording fresh fixtures.
+- **Pin exact versions in our own CI** so test breakage is observed in our CI, not in user installs.
+
+**Decision needed by:** Phase 1 (affects how the direct driver builds env for child processes).
+
+### Q12. What is the remote-control security baseline?
+Remote-control introduces remote endpoints and potentially bearer tokens. The default must not create a network listener that another machine can use without explicit opt-in.
+
+**Recommendation:**
+
+- Claude Remote Control uses Claude Code's native outbound service path; yikes stores only metadata and never the user's remote auth material.
+- Codex websocket app-server binds to loopback by default. Non-loopback requires explicit `--remote-bind`, explicit websocket auth mode, and token material passed by file/env, never raw CLI args.
+- Remote-control transcripts redact URLs/tokens and store endpoint labels, not secrets.
+- Local file/image attachments are validated against the backend host; if a path is local-only, reject unless a configured transfer hook copies it first.
+
+**Decision needed by:** Phase 5.
 
 ## What to read next
 

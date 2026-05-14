@@ -11,7 +11,7 @@ TUI apps write to the terminal in two distinct ways:
 
 Claude Code's `--output-format stream-json` solves this for itself — it emits structured deltas with stable block IDs. But the TUI mode (and Codex's TUI) does not. So our pipeline has to:
 
-- Consume raw bytes from a PTY (via tmux's control-mode `%output`).
+- Consume raw bytes from a PTY (via one tmux control-mode `%output` tap per observed pane).
 - Maintain an in-memory model of the screen (pyte).
 - Emit two kinds of events: streamed deltas, and line revisions.
 
@@ -81,6 +81,21 @@ flowchart LR
 
 We map each backend's native event types to engine events directly. Latency is bounded by the source — usually a few ms.
 
+## Pipeline (remote-control driver)
+
+Remote-control drivers prefer backend-native events over terminal bytes:
+
+```mermaid
+flowchart LR
+    src[("Claude Remote Control status<br/>or<br/>Codex app-server websocket")] --> parse[remote adapter parser]
+    parse --> evbus[engine event bus]
+    evbus --> status["SessionReady / RemoteControlInfo"]
+    evbus --> stream["StreamDelta where backend provides it"]
+    evbus --> approval["ApprovalRequest where backend provides it"]
+```
+
+Claude Remote Control is primarily a remote-human control path, so yikes should expect lifecycle/status metadata and native transcript correlation, not a full terminal mirror. Codex websocket app-server is the same JSON-RPC protocol as direct app-server over a remote transport, so it can emit the same structured turn, item, and approval events when the websocket is healthy.
+
 ## Frame sync (DECSET 2026)
 
 Modern TUIs (including recent Claude Code, see [claude-code#37283](https://github.com/anthropics/claude-code/issues/37283)) emit `ESC[?2026h` ("begin synchronized update") and `ESC[?2026l` ("end") around batches of redraws to avoid flicker. tmux 3.4+ passes these through when `terminal-features` includes `xterm*:sync`.
@@ -129,7 +144,7 @@ class Snapshot:
     ts: float
 ```
 
-For the `tmux` driver, snapshots come from our pyte `screen.display`. For the `direct` driver, we maintain a virtual "rendered" buffer of accumulated assistant text and tool output — there's no actual screen, so the snapshot is just "what would a user have seen if this ran in a terminal."
+For the `tmux` driver, snapshots come from our pyte `screen.display`. For the `direct` driver, we maintain a virtual "rendered" buffer of accumulated assistant text and tool output — there's no actual screen, so the snapshot is just "what would a user have seen if this ran in a terminal." For the `remote-control` driver, snapshots are backend-dependent: Codex app-server can expose structured conversation state, while Claude Remote Control may only expose session status plus links to the native remote UI.
 
 ## Event contract for callers
 

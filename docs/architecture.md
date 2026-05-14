@@ -27,11 +27,13 @@ flowchart TB
     subgraph drivers[Drivers]
         dtmux[tmux driver]
         ddirect[direct subprocess driver]
+        dremote[remote-control driver]
     end
 
     subgraph proc[Processes]
         ptmux[(tmux server<br/>dedicated socket)]
         pdirect[(claude / codex<br/>subprocess)]
+        premote[(remote-control endpoint<br/>Anthropic API / Codex WS)]
     end
 
     cli --> ses
@@ -40,13 +42,17 @@ flowchart TB
     ses --> coa
     ca --> dtmux
     ca --> ddirect
+    ca --> dremote
     coa --> dtmux
     coa --> ddirect
+    coa --> dremote
     dtmux <--> ptmux
     ddirect <--> pdirect
+    dremote <--> premote
 
     dtmux -->|raw bytes| emul
     ddirect -->|stream-json / JSON-RPC| evbus
+    dremote -->|native remote events / status| evbus
     emul --> evbus
     evbus --> tx
     evbus --> snap
@@ -60,8 +66,8 @@ flowchart TB
     class cli,pylib face
     class ses,evbus,tx,snap,emul eng
     class ca,coa adap
-    class dtmux,ddirect drv
-    class ptmux,pdirect pr
+    class dtmux,ddirect,dremote drv
+    class ptmux,pdirect,premote pr
 ```
 
 ## Layers
@@ -79,8 +85,8 @@ Owns the **abstractions** that don't depend on which CLI or driver is in play.
 - **Session manager** — creates, resumes, kills sessions; resolves session IDs to running adapters.
 - **Event bus** — typed pub/sub; subscribers attach `async for` consumers.
 - **Transcript store** — append-only JSONL per session under `~/.yikes/sessions/<id>.jsonl` for replay/inspection. Mirrors the structure of the CLIs' native transcripts but normalises across backends.
-- **Snapshot service** — returns the rendered screen state for a session at any point. Cheap call; backed by either the VT emulator's grid (tmux driver) or the assembled message buffer (direct driver).
-- **VT emulator (pyte)** — only used when the driver is `tmux`. Consumes raw bytes from `pipe-pane`, exposes a dirty-line set we diff into `LineRevised` events.
+- **Snapshot service** — returns the rendered screen state for a session at any point. Cheap call; backed by the VT emulator's grid (tmux driver), the assembled message buffer (direct driver), or the backend's remote session state when available.
+- **VT emulator (pyte)** — only used when the driver is `tmux`. Consumes raw bytes from tmux control-mode `%output`, exposes a dirty-line set we diff into `LineRevised` events.
 
 ### 3. Backend adapters (`yikes.backends.claude`, `yikes.backends.codex`)
 
@@ -93,9 +99,9 @@ Each adapter knows:
 
 The adapter is **driver-agnostic** — it delegates I/O to the driver and just speaks its own protocol on top.
 
-### 4. Drivers (`yikes.drivers.tmux`, `yikes.drivers.direct`)
+### 4. Drivers (`yikes.drivers.direct`, `yikes.drivers.tmux`, `yikes.drivers.remote_control`)
 
-Two implementations of the same internal interface:
+Three implementations of the same internal interface:
 
 ```python
 class Driver(Protocol):
@@ -109,9 +115,18 @@ class Driver(Protocol):
     async def stop(self) -> None: ...
 ```
 
-The **tmux driver** implements this against a managed tmux server on a dedicated socket. The **direct driver** implements it against a plain PTY subprocess. The engine never sees the difference.
+The **direct driver** implements this against a plain subprocess or PTY. The **tmux driver** implements it against a managed tmux server on a dedicated socket. The **remote-control driver** implements it against each backend's native remote surface.
 
-For the `direct` driver, `send_key` is mostly a no-op for `claude -p` (one-shot, doesn't accept input mid-run) but is real for `codex app-server` (where you can send JSON-RPC `turn/cancel`, etc.).
+For the `direct` driver, `send_key` is mostly a no-op for `claude -p` (one-shot, doesn't accept input mid-run) but is real for `codex app-server` (where cancellation is a JSON-RPC `turn/interrupt`). For the `remote-control` driver, low-level keystrokes are backend-specific: Claude exposes remote human control via Anthropic's service, while Codex exposes app-server transports such as websocket and `codex --remote`.
+
+## Mode matrix
+
+These six combinations are first-class test targets:
+
+| Backend | `direct` | `tmux` | `remote-control` |
+|---|---|---|---|
+| Claude Code | `claude -p --output-format stream-json`, plus bidirectional stream-json where supported | `claude` in a managed tmux pane | `claude --remote-control [name]` or `/remote-control`, surfaced through claude.ai / mobile |
+| Codex CLI | `codex app-server --listen stdio://` by default, `codex exec --json` for one-shot | `codex --no-alt-screen` in a managed tmux pane | `codex app-server --listen ws://...` plus API/websocket client or `codex --remote ws://...` |
 
 ## Data flow — `tmux` driver
 
@@ -199,6 +214,32 @@ sequenceDiagram
     end
 ```
 
+## Data flow — `remote-control` driver
+
+```mermaid
+sequenceDiagram
+    actor caller
+    participant lib as yikes.Session
+    participant eng as Engine
+    participant adp as Adapter
+    participant drv as remote-control driver
+    participant rc as native remote surface
+
+    caller->>lib: spawn(driver="remote-control")
+    lib->>eng: create remote-capable session
+    eng->>adp: choose backend remote surface
+    adp->>drv: start remote session
+    drv->>rc: Claude Remote Control or Codex app-server WS
+    rc-->>drv: status / URL / session id / stream events
+    drv-->>eng: SessionReady + RemoteControlInfo
+    eng-->>lib: events and remote metadata
+```
+
+Remote-control is not just tmux over SSH. It is a native backend path:
+
+- Claude Code: the local `claude` process makes outbound TLS connections to Anthropic, and remote clients connect through claude.ai or the Claude app.
+- Codex: the app-server can listen on websocket for remote clients. Loopback plus SSH forwarding is the default safe shape; non-loopback listeners require explicit websocket auth.
+
 ## The event model
 
 All events are dataclasses defined in `yikes.events`. They're the same regardless of backend or driver — the adapter does the translation.
@@ -238,10 +279,14 @@ class ToolResult(Event):
 
 @dataclass(frozen=True)
 class ApprovalRequest(Event):
-    """The TUI is prompting for permission. Caller must call session.approve() or session.deny()."""
+    """A backend asks for permission. Caller must answer this exact request."""
     prompt: str
     options: list[str]        # ["yes", "no", "yes-and-don't-ask-again"]
     request_id: str
+    backend_request_id: str | None
+    thread_id: str | None
+    turn_id: str | None
+    item_id: str | None
 
 @dataclass(frozen=True)
 class TurnComplete(Event):
@@ -257,9 +302,9 @@ Python 3.14 asyncio with `TaskGroup`:
 
 ```python
 async with asyncio.TaskGroup() as tg:
-    tg.create_task(driver_reader())     # pipe-pane / stdout drain
+    tg.create_task(driver_reader())     # direct stdout, tmux %output, or remote events
     tg.create_task(emulator_pump())     # feed pyte, emit events
-    tg.create_task(notification_pump()) # tmux control-mode notifications
+    tg.create_task(notification_pump()) # backend/tmux status notifications
     tg.create_task(transcript_writer()) # append events to JSONL
 ```
 
@@ -309,8 +354,10 @@ flowchart TB
     user["yikes ps"] --> mgr[Manager.list]
     mgr --> tdrv[tmux driver: list-sessions]
     mgr --> ddrv["direct driver: state in ~/.yikes/"]
+    mgr --> rdrv["remote-control driver: native state + ~/.yikes/"]
     tdrv --> merge[merge + sort]
     ddrv --> merge
+    rdrv --> merge
     merge --> table["one table, both backends"]
 ```
 
@@ -318,6 +365,7 @@ Internally:
 
 - **tmux driver** maintains pane-tagged metadata (`YIKES_BACKEND`, `YIKES_NATIVE_ID`, `YIKES_MODEL`) per session, queried via `tmux list-sessions -F '...'`.
 - **direct driver** (long-lived `codex app-server`) tracks its sessions in `~/.yikes/state/`.
+- **remote-control driver** stores endpoint metadata (`remote_url`, `environment_id`, websocket endpoint, auth mode) in `~/.yikes/state/`, but never stores bearer tokens in transcripts.
 - The Manager unions both and returns a single sorted list.
 
 This is what makes "for the user it shall not make a major difference" real: they pick a backend and a mode, and the session ops above behave the same way regardless.
@@ -336,6 +384,6 @@ We **co-locate** our normalised view at `~/.yikes/sessions/<our-id>.jsonl`, with
 These need user input before implementation; they're tracked in [Roadmap](roadmap.md#open-questions).
 
 1. **Codex `app-server` framing** — newline-delimited JSON without the `"jsonrpc":"2.0"` header on the wire. We should generate types via `codex app-server generate-ts` and check the schema in, rather than hand-rolling.
-2. **Driver auto-selection** — should the engine pick `tmux` vs `direct` automatically based on the operation, or require explicit user choice? Recommendation: heuristic default, explicit override always wins.
+2. **Driver auto-selection** — should the engine pick `direct`, `tmux`, or `remote-control` automatically based on the operation, or require explicit user choice? Recommendation: `direct` for one-shot structured work, `tmux` for local TUI/human attach, `remote-control` only when explicitly requested.
 3. **Cross-backend `Session` lifetime** — Claude Code's native resume vs Codex's `thread/resume` — do we map them to one `Session.resume(id)`? Recommendation: yes, with a per-backend ID format and a thin adapter.
 4. **Approval handling defaults** — auto-approve `Read`-only tools? Or always defer to the caller? Recommendation: defer; offer a policy hook.

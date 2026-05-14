@@ -2,7 +2,7 @@
 
 The CLI is a thin shell over the Python library. It must hit two notes:
 
-1. **From a user's perspective**, the only real choice is **provider** (Claude or Codex) and **mode** (interactive/streaming vs one-shot). Everything else has a sensible default.
+1. **From a user's perspective**, the main choices are **provider** (Claude or Codex) and **driver** (`direct`, `tmux`, or `remote-control`). Everything else has a sensible default.
 2. **For session management** (spawn, kill, list, killall, attach), the command surface is uniform across both backends — same flags, same output, same exit codes.
 
 Native `claude` / `codex` flags are still accepted (we proxy them through), but you rarely need to set them.
@@ -18,9 +18,10 @@ Global options:
 | Flag | Description | Default |
 |---|---|---|
 | `-b`, `--backend {claude,codex}` | Which CLI to drive. | `claude` |
-| `-d`, `--driver {tmux,direct,auto}` | How to drive it. | `auto` |
+| `-d`, `--driver {direct,tmux,remote-control,auto}` | How to drive it. | `auto` |
 | `-s`, `--session NAME_OR_ID` | Operate on a specific session. | (new) |
-| `--socket NAME` | tmux socket to use. | `yikes` |
+| `--socket PATH_OR_NAME` | tmux socket path/name, only for `tmux`. | `~/.yikes/tmux/default.sock` |
+| `--remote ADDR_OR_NAME` | Remote-control endpoint/name, only for `remote-control`. | backend default |
 | `--cwd PATH` | Working dir for spawned sessions. | `$PWD` |
 | `--no-color` | Strip ANSI from output. | off |
 | `-v`, `--verbose` | Engine-level logs. | off |
@@ -33,6 +34,7 @@ flowchart LR
     subgraph one[User-facing: provider + mode]
         prompt[yikes run]
         interactive[yikes shell]
+        remote[yikes remote]
         oneshot[yikes ask]
     end
     subgraph two[Session ops: uniform across backends]
@@ -95,6 +97,19 @@ yikes -b codex shell
 
 This effectively does `yikes spawn` + `yikes attach`. Detaches cleanly on `Ctrl+B D` (tmux's standard detach key).
 
+### `yikes remote` — native remote-control session
+
+```bash
+yikes remote                         # Claude Remote Control by default
+yikes -b codex remote --listen 127.0.0.1:4500
+yikes remote --name release-prep
+```
+
+- Default driver: `remote-control`.
+- Claude maps to `claude --remote-control [name]`.
+- Codex maps to `codex app-server --listen ws://...` plus either a websocket yikes client or a printed `codex --remote ws://...` attach command.
+- Remote-control sessions are listed in `yikes ps` like any other session.
+
 ### `yikes spawn` — create a session, don't attach
 
 ```bash
@@ -136,16 +151,16 @@ yikes killall                      # kills all sessions on our socket
 yikes killall --dry-run            # show what would die
 ```
 
-Convenience wrapper around `tmux -L yikes kill-server` plus cleanup of our state directory.
+Convenience wrapper around the active drivers: tmux `kill-server` for our socket path, direct subprocess shutdown, remote-control endpoint shutdown where supported, plus cleanup of our state directory.
 
 ### `yikes attach` — open a session in the user's terminal
 
 ```bash
 yikes attach yik_3f9a
-# (drops into the AI's TUI, attached via tmux)
+# (drops into tmux for local TUI sessions, or prints native remote attach info for remote-control sessions)
 ```
 
-Prints the tmux attach command if invoked with `--print-only` (for embedding in IDE integrations).
+Prints the tmux or native remote attach command if invoked with `--print-only` (for embedding in IDE integrations).
 
 ### `yikes logs` — replay or tail a session's events
 
@@ -171,12 +186,12 @@ Unknown flags are passed through verbatim to the underlying CLI. We just wrap th
 
 | Concern | Default |
 |---|---|
-| tmux socket | `yikes` (isolated from user's tmux) |
+| tmux socket | `~/.yikes/tmux/default.sock` under a `0700` directory |
 | Pane size | 200×50 |
 | Approval policy | Ask interactively if running on a TTY; auto-fail if running headless |
 | Transcript persistence | On, at `~/.yikes/sessions/` |
 | Native session persistence | On (we don't pass `--no-session-persistence` / `--ephemeral`) |
-| Driver | `auto` — `tmux` for `run`/`shell`/`spawn`, `direct` for `ask` and passthrough `-p`/`exec` |
+| Driver | `auto` — `direct` for `ask` and passthrough `-p`/`exec`, `tmux` for local `run`/`shell`/`spawn`, `remote-control` for `remote` |
 | Frame sync | On |
 | Coalesce window | 80 ms |
 
@@ -187,6 +202,7 @@ Unknown flags are passed through verbatim to the underlying CLI. We just wrap th
 | `ask` | yes, ephemeral | yes | no (rejects approval) | `direct` |
 | `run` | yes (or use `-s`) | yes | yes (approvals) | `tmux` |
 | `shell` | yes (or `-s`) | yes (visible TUI) | full TUI | `tmux` |
+| `remote` | yes (or use `-s`) | backend-dependent | remote UI / websocket | `remote-control` |
 | `spawn` | yes | no (just prints ID) | no | `tmux` |
 | `ps` | no | no | no | n/a |
 | `kill` | no | no | no | n/a |
@@ -239,6 +255,7 @@ ANSI-stripped text-only output (like the assistant's response, no chrome). Maps 
 | `5` | Backend binary not found |
 | `6` | tmux unavailable (with `--driver tmux`) |
 | `7` | Session not found |
+| `8` | Remote-control unavailable or refused |
 
 `yikes ask --json` and `yikes run --json` exit `0` if the event stream completes cleanly, regardless of whether the assistant said "I don't know." Failure means an *infrastructure* failure.
 
@@ -272,6 +289,7 @@ git diff main | yikes ask --json \
 |---|---|---|---|
 | One-shot | `yikes ask "..."` | `claude -p "..." --output-format stream-json` | `codex exec "..." --json` |
 | Long session | `yikes spawn` + `yikes run -s id "..."` | TUI inside tmux, send-keys | TUI inside tmux **or** `app-server` |
+| Native remote | `yikes remote` | `claude --remote-control [name]` | `codex app-server --listen ws://...` / `codex --remote ws://...` |
 | Resume | `yikes spawn --resume <id>` | `claude --resume <id>` | `codex resume <id>` |
 | List sessions | `yikes ps` | (none natively) | `thread/list` via app-server |
 | Kill one | `yikes kill <id>` | (none natively) | (kill app-server thread) |
@@ -287,3 +305,16 @@ Note where the native CLI has no equivalent — those rows are why this wrapper 
 - Async commands use `asyncio.run()` at the entry; the rest of the library is fully async.
 - Streaming output uses `rich.console.Console` for ANSI rendering, with `--no-color` toggling that off.
 - The CLI never imports `pyte`, `libtmux`, or any backend SDK directly — only `yikes.Session`, `yikes.Manager`. That guarantees parity.
+
+## Six-mode test matrix
+
+Every release must run a smoke test for all six backend/driver combinations:
+
+| Backend | Driver | Smoke command |
+|---|---|---|
+| Claude | `direct` | `yikes -b claude -d direct ask "ping"` |
+| Claude | `tmux` | `yikes -b claude -d tmux run "ping"` |
+| Claude | `remote-control` | `yikes -b claude -d remote-control remote --name smoke` |
+| Codex | `direct` | `yikes -b codex -d direct ask "ping"` |
+| Codex | `tmux` | `yikes -b codex -d tmux run "ping"` |
+| Codex | `remote-control` | `yikes -b codex -d remote-control remote --listen 127.0.0.1:0` |

@@ -70,7 +70,7 @@ class Manager:
     def __init__(
         self,
         *,
-        socket_name: str = "yikes",
+        socket_path: Path | None = Path.home() / ".yikes" / "tmux" / "default.sock",
         config_dir: Path = Path.home() / ".yikes",
     ) -> None: ...
 
@@ -93,6 +93,7 @@ class Manager:
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
         max_turns: int | None = None,
         max_budget_usd: float | None = None,
+        remote: str | None = None,          # remote name or endpoint for Driver.REMOTE_CONTROL
         extra_args: list[str] | None = None,   # passed through verbatim
     ) -> Session: ...
 
@@ -101,7 +102,7 @@ class Manager:
     async def kill(self, session_id: str) -> None: ...
     async def kill_all(self) -> None: ...
     async def attach_command(self, session_id: str) -> list[str]:
-        """Returns argv for the user to manually attach with their own tmux."""
+        """Returns argv for tmux attach or native remote attach."""
         ...
 ```
 
@@ -122,6 +123,8 @@ class SessionInfo:
     model: str | None
     cost_usd: float
     turns: int
+    remote_url: str | None
+    remote_endpoint: str | None
 ```
 
 ### `yikes.Session`
@@ -274,20 +277,25 @@ await session.turn([
 ```
 
 - `Part.text(str)` — raw text.
-- `Part.image(path)` — adds `-i path` in direct mode, attaches via paste-buffer in tmux mode.
-- `Part.file_ref(path)` — translates to `@path` for both backends.
+- `Part.image(path)` — adds native image input in direct mode, attaches via paste-buffer or `@path` in tmux mode, and in remote-control mode must resolve on the host where the backend process runs.
+- `Part.file_ref(path)` — translates to `@path` for both backends, after validating that the path exists on the backend host.
 - `Part.from_stdin()` — for piped input.
+
+For remote-control sessions, local paths are not assumed to exist remotely. The adapter either copies the file into the remote workspace through an explicit transfer hook or rejects the part with `AttachmentUnavailable`.
 
 ## Configuration
 
 ```python
 from yikes import settings
 
-settings.tmux.socket_name = "yikes-prod"
+settings.tmux.socket_path = Path.home() / ".yikes" / "tmux" / "prod.sock"
 settings.tmux.pane_width = 240
 settings.tmux.pane_height = 60
 settings.tmux.frame_sync = True
 settings.tmux.coalesce_ms = 80
+
+settings.remote_control.default_host = "127.0.0.1"
+settings.remote_control.require_auth_for_non_loopback = True
 
 settings.transcripts.dir = Path.home() / ".yikes" / "sessions"
 settings.transcripts.persist = True
@@ -338,7 +346,7 @@ async for ev in s.events():               # picks up where A left off
     ...
 ```
 
-This works because the underlying tmux pane (or `codex app-server` subprocess) is still alive. The transcript is replayed from JSONL up to the last seen `seq`, then live events continue.
+This works because the underlying tmux pane, direct app-server subprocess, or remote-control endpoint is still alive. The transcript is replayed from JSONL up to the last seen `seq`, then live events continue.
 
 ## Type discipline
 
@@ -375,9 +383,13 @@ yikes/
 │   │   ├── control.py      # -C subprocess
 │   │   ├── commands.py     # libtmux wrappers
 │   │   └── isolation.py    # socket / config setup
-│   └── direct/
+│   ├── direct/
 │       ├── driver.py
 │       └── pty.py
+│   └── remote_control/
+│       ├── driver.py
+│       ├── claude.py
+│       └── codex_ws.py
 ├── backends/
 │   ├── base.py
 │   ├── claude/
