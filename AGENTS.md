@@ -30,3 +30,10 @@ Forbidden in any tmux path:
 - Any other headless one-shot command used as a substitute for the interactive TUI.
 
 Headless commands belong only to non-tmux `cli`/direct paths.
+
+## Web UI Dialogs
+
+When building yikes! as a llming-stage web app, dialogs and confirmations must
+use Quasar dialog components or an app-owned dialog component. Do not use native
+browser dialogs such as `alert`, `confirm`, or `prompt`; they are not themeable,
+not test-friendly, and do not fit the llming-stage/Quasar interaction model.

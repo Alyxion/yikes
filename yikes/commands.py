@@ -363,11 +363,16 @@ def default_command_registry() -> CommandRegistry:
     def fullscreen_command(_context: CommandContext, _arg: str) -> CommandResult:
         return CommandResult("Fullscreen tmux attach is available in the terminal UI.")
 
+    def term_command(_context: CommandContext, _arg: str) -> CommandResult:
+        return CommandResult("Interactive terminal attach is available in the terminal and web UIs.")
+
     def web_command(context: CommandContext, arg: str) -> CommandResult:
         normalized = arg.lower()
         if not normalized:
             state = "enabled" if context.conversation.options.settings.web_search_enabled else "disabled"
-            return CommandResult(f"Web search: {state}.")
+            return CommandResult(f"Web search: {state}. In the terminal UI, /web opens the authenticated web app.")
+        if normalized in {"open", "ui", "app"}:
+            return CommandResult("Opening the web app is available in the terminal UI.")
         if normalized in {"on", "enable", "enabled", "true", "yes"}:
             context.conversation.set_web_search(True)
             return CommandResult("Web search enabled.")
@@ -516,6 +521,7 @@ def default_command_registry() -> CommandRegistry:
     def web_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
         normalized = prefix.lower()
         options = [
+            CommandSuggestion("open", "Open the authenticated web app", "/web"),
             CommandSuggestion("on", "Enable web search", "/web on"),
             CommandSuggestion("off", "Disable web search", "/web off"),
         ]
@@ -614,7 +620,7 @@ def default_command_registry() -> CommandRegistry:
             preview_suggestions=model_suggestions,
         )
     )
-    registry.register(CommandSpec("status", "Show backend, location, driver, model, cwd, and message count", status_command))
+    registry.register(CommandSpec("status", "Show backend, location, driver, model, and message count", status_command))
     registry.register(CommandSpec("sessions", "List known yikes! tmux, Docker, and remote sessions", sessions_command, aliases=("ps",)))
     registry.register(
         CommandSpec(
@@ -701,9 +707,9 @@ def default_command_registry() -> CommandRegistry:
     registry.register(
         CommandSpec(
             "web",
-            "Enable, disable, or show web search",
+            "Open the web app, or enable/disable web search",
             web_command,
-            usage="[on|off]",
+            usage="[open|on|off]",
             argument_suggestions=web_suggestions,
         )
     )
@@ -752,6 +758,14 @@ def default_command_registry() -> CommandRegistry:
             "Overtake the selected tmux session in fullscreen",
             fullscreen_command,
             aliases=("overtake",),
+        )
+    )
+    registry.register(
+        CommandSpec(
+            "term",
+            "Attach interactively to the selected tmux session",
+            term_command,
+            aliases=("terminal",),
         )
     )
     registry.register(CommandSpec("exit", "Exit the terminal app", exit_command))

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>yikes!</title>
+    <link rel="stylesheet" href="/static/vendor/xterm.css">
+    <link rel="stylesheet" href="/static/yikes-web.css">
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar">
+        <div class="brand"><img src="/static/logo.png" alt="yikes!"></div>
+        <dl id="status" class="status"></dl>
+      </aside>
+
+      <main class="workspace">
+        <div id="tabs" class="tabs"></div>
+        <section id="no-session" class="empty hidden">
+          <h1>No active session</h1>
+          <p>Create a session to start chatting. Normal text input is disabled until one exists.</p>
+          <button id="empty-new" class="primary">New Session</button>
+        </section>
+
+        <section id="wizard" class="wizard hidden">
+          <div class="wizard-head">
+            <div>
+              <h1>New session</h1>
+              <p>Choose where it runs, how it is driven, and which filesystem root is exposed.</p>
+            </div>
+            <button id="wizard-cancel">Cancel</button>
+          </div>
+          <div id="wizard-grid" class="wizard-grid"></div>
+          <div class="browser">
+            <div class="browser-toolbar">
+              <button id="root-none">No file access</button>
+              <button id="root-start">Start dir</button>
+              <span id="browser-path"></span>
+            </div>
+            <div id="browser-list" class="browser-list"></div>
+          </div>
+          <div class="wizard-actions">
+            <button id="wizard-create" class="primary">Create Session</button>
+          </div>
+        </section>
+
+        <section id="terminal-panel" class="terminal-panel">
+          <div id="terminal-mode-bar" class="terminal-mode-bar hidden">
+            <span>Interactive terminal attached. Press Ctrl-b to return to yikes!.</span>
+            <button id="term-return" type="button">Return</button>
+          </div>
+          <div id="terminal"></div>
+        </section>
+
+        <div id="suggestions" class="suggestions hidden"></div>
+        <div id="context-menu" class="context-menu hidden"></div>
+        <div id="dialog" class="dialog-backdrop hidden">
+          <section class="dialog">
+            <h2 id="dialog-title"></h2>
+            <p id="dialog-body"></p>
+            <div class="dialog-actions">
+              <button id="dialog-cancel">Cancel</button>
+              <button id="dialog-confirm" class="danger primary">Close All</button>
+            </div>
+          </section>
+        </div>
+        <form id="composer" class="composer">
+          <input id="message" autocomplete="off" placeholder="Message, /help, /model, /clear...">
+          <button class="primary" type="submit">Send</button>
+        </form>
+      </main>
+    </div>
+
+    <script src="/static/vendor/xterm.js"></script>
+    <script src="/static/vendor/xterm-addon-fit.js"></script>
+    <script src="/static/vendor/xterm-addon-web-links.js"></script>
+    <script src="/static/vendor/xterm-addon-webgl.js"></script>
+    <script src="/static/yikes-web.js"></script>
+  </body>
+</html>

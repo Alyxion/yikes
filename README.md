@@ -2,7 +2,7 @@
 
 # yikes!
 
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Alyxion/yikes/blob/main/LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blueviolet.svg)](https://github.com/Alyxion/yikes)
 [![Built with Poetry](https://img.shields.io/badge/build-poetry-60A5FA.svg)](https://python-poetry.org/)
@@ -28,6 +28,8 @@ It is built for the cases where a simple one-shot prompt is not enough: persiste
 ---
 
 ## Quick start
+
+Requires Python 3.14 or newer.
 
 ```bash
 git clone https://github.com/Alyxion/yikes.git
@@ -56,7 +58,7 @@ poetry run yikes close <session-id>      # close one session
 
 Inside the app, session tabs sit at the top and detailed configuration stays in slash commands. `/new` opens a question-style session chooser with the normal input bar hidden: use Up/Down to move through backend, location, driver, model, complexity, web, and root directory; use Left/Right to change values; press Enter to start. Commands such as `/backend`, `/location`, `/driver`, `/models`, `/web`, `/dirs`, `/mcp`, `/sessions`, and `/restart` are backed by the same command registry used by the Python layer.
 
-For tmux sessions, `/view extracted` shows the clean answer and `/view full` shows the captured terminal output where available. `/key Down`, `/key Up`, `/key Enter`, and `/paste ...` can answer native TUI prompts without leaving yikes!. `/fullscreen` hands the whole terminal to tmux for full native control; detach back out with `Ctrl-b` then `d`.
+For tmux sessions, `/view extracted` shows the clean answer and `/view full` shows the captured terminal output where available. `/key Down`, `/key Up`, `/key Enter`, and `/paste ...` can answer native TUI prompts without leaving yikes!. `/term` opens an interactive terminal attach, and `/fullscreen` gives that terminal the whole screen. Press `Ctrl-b` or the visible return control to come back to yikes!.
 
 To attach images in the terminal app, use `Ctrl+V` for smart paste: yikes! imports an image from the OS clipboard when one is present, otherwise it inserts clipboard text. Dragged or pasted image file paths attach to the next message. `Ctrl+O` forces image-only paste. Host sessions use the local path directly; Docker sessions copy the image into the sandbox before sending the turn.
 

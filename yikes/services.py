@@ -179,7 +179,6 @@ class Conversation:
             "read_roots": str(len(settings.read_roots)),
             "write_roots": str(len(settings.write_roots)),
             "mcps": str(len(settings.mcp_servers)),
-            "cwd": str(self.options.cwd),
             "messages": str(len(self.messages)),
         }
 

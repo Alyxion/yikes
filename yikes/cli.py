@@ -197,6 +197,34 @@ if typer:
         typer.echo(f"yikes! server listening on {config.websocket_url} (auth: {'on' if auth else 'off'})")
         asyncio.run(remote_server.serve_forever())
 
+    @app.command("web")
+    def web(
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
+        port: int = typer.Option(8760, "--port", "-p", help="HTTP port."),
+        cwd: Path | None = typer.Option(None, "--cwd", help="Default start directory for new sessions."),
+        dev: bool = typer.Option(True, "--dev/--no-dev", help="Persist the local login key in .env for development."),
+        open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the web UI in the default browser."),
+    ) -> None:
+        import threading
+        import time
+        import webbrowser
+
+        import uvicorn
+
+        from .app_core import YikesAppController
+        from .web import create_app
+        from .web_auth import WebAuthConfig
+
+        root = (cwd or Path.cwd()).expanduser()
+        auth_config = WebAuthConfig.load(developer_mode=dev, env_path=root / ".env")
+        url = auth_config.login_url(host=host, port=port)
+        app_instance = create_app(YikesAppController(cwd=root), auth=auth_config)
+        if open_browser:
+            threading.Thread(target=lambda: (time.sleep(0.8), webbrowser.open(url)), daemon=True).start()
+        typer.echo(f"yikes! web UI listening on http://{host}:{port}/")
+        typer.echo(f"login URL: {url}")
+        uvicorn.run(app_instance, host=host, port=port, log_level="info")
+
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else sys.argv[1:]

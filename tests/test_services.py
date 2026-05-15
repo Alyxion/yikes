@@ -188,6 +188,9 @@ def test_slash_command_suggestions_come_from_registry() -> None:
     restart_suggestions = conversation.slash_suggestions("/res")
     assert [suggestion.completion for suggestion in restart_suggestions] == ["/restart"]
 
+    term_suggestions = conversation.slash_suggestions("/ter")
+    assert [suggestion.completion for suggestion in term_suggestions] == ["/term"]
+
     model_suggestions = conversation.slash_suggestions("/model s")
     assert [suggestion.completion for suggestion in model_suggestions] == ["/model sonnet"]
 
@@ -208,7 +211,7 @@ def test_slash_command_suggestions_come_from_registry() -> None:
     assert [suggestion.completion for suggestion in complexity_suggestions] == ["/complexity high"]
 
     web_suggestions = conversation.slash_suggestions("/web o")
-    assert {suggestion.completion for suggestion in web_suggestions} == {"/web on", "/web off"}
+    assert {suggestion.completion for suggestion in web_suggestions} == {"/web", "/web on", "/web off"}
 
     models_preview = conversation.slash_suggestions("/models")
     assert {suggestion.value for suggestion in models_preview} >= {"default", "sonnet", "opus", "haiku"}

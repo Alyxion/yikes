@@ -147,7 +147,8 @@ For interactive prompts, yikes! exposes both small controls and full overtake:
 
 - `/key Up`, `/key Down`, `/key Enter`, `/key Escape`, or similar sends one tmux key to the selected session.
 - `/paste <text>` pastes text into the selected tmux session.
-- `/fullscreen` exits the yikes! control UI into a real `tmux attach`, so every key goes directly to Claude/Codex. The reliable terminal escape is tmux's native detach sequence: `Ctrl-b`, then `d`. Double-Escape is intentionally avoided because Escape is part of many terminal key sequences, including cursor keys and modal UI behavior.
+- `/term` opens an interactive terminal attach in the current yikes! surface.
+- `/fullscreen` gives that attach the whole screen, so every key goes directly to Claude/Codex except yikes!' reserved return key. Press `Ctrl-b` or the visible return control to resume the yikes! UI. Double-Escape is intentionally avoided because Escape is part of many terminal key sequences, including cursor keys and modal UI behavior.
 
 ---
 

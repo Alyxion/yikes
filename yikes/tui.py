@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import pty
 import sys
 import tempfile
 
@@ -180,7 +181,6 @@ def run_tui(
                     yield Static("", id="model-status")
                     yield Static("", id="complexity-status")
                     yield Static("", id="web-status")
-                    yield Static(f"CWD: {self.conversation.options.cwd}")
                     yield Static("", id="session-count")
                     yield Button("New Session", id="new-session", classes="sidebar-button")
                     yield Button("Refresh Sessions", id="refresh-sessions", classes="sidebar-button")
@@ -492,7 +492,7 @@ def run_tui(
             self._show_no_session_message(
                 "No active session. Start one with the button or /new. "
                 f"Defaults: {options.backend.value}/{options.location.value}/{options.mode.value}, "
-                f"model {options.model or 'default'}, cwd {options.cwd}."
+                f"model {options.model or 'default'}."
             )
 
         def _set_session_view(self, *, active: bool) -> None:
@@ -734,7 +734,7 @@ def run_tui(
                 self._write_status(f"Session is not attachable: {session_id}")
                 await self._refresh_sessions()
                 return
-            log.write("[bold green]yikes![/bold green] Entering fullscreen tmux. Detach with Ctrl-b then d.")
+            log.write("[bold green]yikes![/bold green] Entering fullscreen tmux. Press Ctrl-b to return to yikes!.")
             self.attach_command = command
             self.exit()
 
@@ -842,7 +842,13 @@ def run_tui(
             parts = text.strip().split(maxsplit=1)
             command = parts[0].lower() if parts else ""
             arg = parts[1] if len(parts) > 1 else ""
-            if command in {"/fullscreen", "/overtake"}:
+            if command == "/web" and arg.strip().lower() in {"", "open", "ui", "app"}:
+                from .web_launcher import launch_web_ui
+
+                result = launch_web_ui(cwd=self.conversation.options.cwd, developer_mode=True)
+                self._write_status(result.message, style="bold green")
+                return True
+            if command in {"/fullscreen", "/overtake", "/term", "/terminal"}:
                 await self._fullscreen_selected_session()
                 return True
             if command == "/view":
@@ -920,6 +926,17 @@ def run_tui(
     app = TerminalApp()
     app.run()
     if app.attach_command:
-        os.execvp(app.attach_command[0], app.attach_command)
+        _attach_until_ctrl_b(app.attach_command)
+        os.execv(sys.executable, [sys.executable, *sys.argv])
     if app.restart_requested:
         os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
+def _attach_until_ctrl_b(command: list[str]) -> None:
+    def stdin_read(fd: int) -> bytes:
+        data = os.read(fd, 1024)
+        if b"\x02" in data:
+            return b"\x02d"
+        return data
+
+    pty.spawn(command, stdin_read=stdin_read)

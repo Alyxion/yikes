@@ -108,9 +108,10 @@ Inside the terminal UI, the same capabilities are exposed without making users r
 - `/key <key>` sends one tmux key to the selected session. Examples: `/key Down`, `/key Up`, `/key Enter`, `/key Escape`, `/key C-c`.
 - `/paste <text>` loads text into a tmux buffer and pastes it into the selected session.
 - `/view extracted` shows yikes!' parsed answer; `/view full` shows captured terminal output when a backing tmux session can be resolved.
-- `/fullscreen` overtakes the session by execing the native tmux attach command. While attached, all input goes directly to Claude/Codex. Detach with `Ctrl-b` then `d`.
+- `/term` opens an interactive terminal attach to the tmux session.
+- `/fullscreen` overtakes the session with the same interactive attach while hiding the yikes! composer/sidebar. While attached, all input goes directly to Claude/Codex except `Ctrl-b`, which yikes! reserves as the return-to-yikes escape.
 
-The fullscreen escape intentionally uses tmux's default detach sequence instead of double-Escape. Escape is not a safe global escape hatch in terminal applications because cursor keys and many application-level shortcuts are encoded as escape sequences.
+The fullscreen escape intentionally avoids double-Escape. Escape is not a safe global escape hatch in terminal applications because cursor keys and many application-level shortcuts are encoded as escape sequences. Browser and CLI attach surfaces also show a visible return control where the UI allows it.
 
 ## Lifecycle
 
