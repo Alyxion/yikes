@@ -45,6 +45,15 @@ class MessageRole(StrEnum):
 
 
 @dataclass(frozen=True)
+class ImageAttachment:
+    path: Path
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+
+@dataclass(frozen=True)
 class McpServer:
     name: str
     command: str
@@ -129,6 +138,12 @@ class ChatOptions:
 
     def with_settings(self, settings: AgentSettings) -> "ChatOptions":
         return replace(self, settings=settings)
+
+    def with_session_id(self, session_id: str) -> "ChatOptions":
+        return replace(self, session_id=session_id)
+
+    def with_cwd(self, cwd: Path, *, explicit: bool = True) -> "ChatOptions":
+        return replace(self, cwd=cwd.expanduser(), cwd_explicit=explicit)
 
     @property
     def location(self) -> ExecutionLocation:

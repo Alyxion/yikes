@@ -5,7 +5,7 @@ The Claude Code adapter (`yikes.backends.claude`) drives the `claude` CLI in two
 - **TUI mode** — `claude` (REPL) inside a tmux pane. Keystrokes for everything.
 - **Headless mode** — `claude -p ... --output-format stream-json --verbose`. Parsed NDJSON straight into the event bus.
 
-Claude's native Remote Control (`claude --remote-control` / `/remote-control`) is a human remote UI. Yikes does not treat it as a prompt/response chat runtime. The future remote path for OpenHort/web clients is a Yikes `remote-server` session that owns a normal Claude backend process.
+Claude's native Remote Control (`claude --remote-control` / `/remote-control`) is a human remote UI. yikes! does not treat it as a prompt/response chat runtime. The future remote path for OpenHort/web clients is a yikes! `remote-server` session that owns a normal Claude backend process.
 
 ## I/O reference (summary)
 
@@ -19,7 +19,7 @@ Full reference is in the research notes; here's what the adapter actually uses.
 | Multi-turn (resume) | `claude --resume <session-id>` |
 | Continue most-recent | `claude --continue` |
 | Streaming input/output | `--input-format stream-json --output-format stream-json` |
-| Native remote human UI | `--remote-control [name]` / `--rc [name]`, or `/remote-control` inside an interactive session; not a Yikes chat transport |
+| Native remote human UI | `--remote-control [name]` / `--rc [name]`, or `/remote-control` inside an interactive session; not a yikes! chat transport |
 | File reference in prompt | `@path/to/file` (glob OK) |
 | System prompt | `--system-prompt`, `--append-system-prompt` (and `*-file` variants) |
 | Settings override | `--settings '{...}'` or `--settings ./file.json` |
@@ -161,7 +161,7 @@ This is the closest direct-mode analogue to a long-lived TUI session, but mid-tu
 claude --remote-control "My Project"
 ```
 
-The local `claude` process stays running and makes outbound TLS connections to Anthropic. Remote users connect through `claude.ai/code` or the Claude mobile app. This is useful to understand, but it is not the remote runtime Yikes will expose to OpenHort.
+The local `claude` process stays running and makes outbound TLS connections to Anthropic. Remote users connect through `claude.ai/code` or the Claude mobile app. This is useful to understand, but it is not the remote runtime yikes! will expose to OpenHort.
 
 Remote-control mode is a native remote-human workflow, not a terminal byte stream:
 
@@ -171,7 +171,7 @@ Remote-control mode is a native remote-human workflow, not a terminal byte strea
 - Some local-only slash commands and terminal pickers are not available remotely.
 - We do not infer approvals by sending raw `y` keystrokes in this mode; approvals are handled by Claude's remote UI.
 
-For automated structured output, use `direct`. For local TUI attach or local prompt automation, use `tmux`. For OpenHort/web remote attach, use the future Yikes `remote-server` runtime. Do not model Claude Remote Control as a Yikes chat transport unless Claude exposes a documented programmatic turn API.
+For automated structured output, use `direct`. For local TUI attach or local prompt automation, use `tmux`. For OpenHort/web remote attach, use the future yikes! `remote-server` runtime. Do not model Claude Remote Control as a yikes! chat transport unless Claude exposes a documented programmatic turn API.
 
 ## Adapter responsibilities
 
@@ -225,4 +225,4 @@ Manual updates: `claude update` (and `/doctor` to inspect the installation).
 - **`--bare` skips CLAUDE.md, hooks, plugins, MCP.** Use it for deterministic CI; *don't* use it for the tmux mode where the user likely wants their config.
 - **Multi-line paste via tmux can collapse to one line** if the user has `extended-keys-format csi-u`. The tmux layer runs on a dedicated socket with that off — see [tmux Layer](../tmux-layer.md#isolation).
 - **Approval-prompt detection is heuristic.** If Claude Code changes its modal rendering, our regex needs updating. Wrap detection in a versioned matcher with a fallback test fixture.
-- **Remote Control is session-level and human-oriented.** It is useful for remote/mobile continuation, but it is not a replacement for `stream-json` or the future Yikes remote-server when the caller needs machine-readable deltas.
+- **Remote Control is session-level and human-oriented.** It is useful for remote/mobile continuation, but it is not a replacement for `stream-json` or the future yikes! remote-server when the caller needs machine-readable deltas.

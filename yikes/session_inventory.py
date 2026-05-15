@@ -20,7 +20,7 @@ class SessionSummary:
 
 
 class SessionInventory:
-    """Read-only inventory over durable Yikes sessions and Docker sandboxes."""
+    """Read-only inventory over durable yikes! sessions and Docker sandboxes."""
 
     def __init__(
         self,
@@ -35,7 +35,6 @@ class SessionInventory:
         rows: list[SessionSummary] = []
         rows.extend(self._durable_sessions())
         rows.extend(self._docker_sessions())
-        rows.sort(key=lambda item: (item.runtime, item.id))
         return rows
 
     def format(self) -> str:
@@ -113,7 +112,7 @@ class CloseResult:
 
 
 class SessionLifecycle:
-    """Close, bulk-close, and switch known Yikes sessions."""
+    """Close, bulk-close, and switch known yikes! sessions."""
 
     def __init__(
         self,
@@ -156,6 +155,7 @@ class SessionLifecycle:
                 model=durable.model,
                 complexity=durable.complexity,
                 settings=durable.settings,
+                session_id=durable.id,
             )
         sandbox = SandboxManager(self.sandbox_store).get(session_id)
         if sandbox is None:
@@ -170,6 +170,52 @@ class SessionLifecycle:
             model=current.model,
             complexity=current.complexity,
             settings=settings,
+            session_id=sandbox.id,
+        )
+
+    def snapshot(self, session_id: str, *, lines: int = 400) -> str | None:
+        durable = DurableSessionManager(self.runtime_store).get(session_id)
+        if durable is not None and durable.runtime.kind is RuntimeKind.TMUX and durable.runtime.tmux_socket:
+            cmd = [
+                "tmux",
+                "-S",
+                durable.runtime.tmux_socket,
+                "capture-pane",
+                "-p",
+                "-J",
+                "-S",
+                f"-{lines}",
+                "-E",
+                "-",
+            ]
+            if durable.runtime.tmux_session:
+                cmd.extend(["-t", durable.runtime.tmux_session])
+            return _capture_output(cmd)
+        sandbox = SandboxManager(self.sandbox_store).get(session_id)
+        if sandbox is None:
+            return None
+        socket = sandbox.meta.user_data.get("tmux_socket")
+        session = sandbox.meta.user_data.get("tmux_session")
+        if not socket or not session:
+            return None
+        return _capture_output(
+            [
+                "docker",
+                "exec",
+                sandbox.container_name,
+                "tmux",
+                "-S",
+                socket,
+                "capture-pane",
+                "-p",
+                "-J",
+                "-S",
+                f"-{lines}",
+                "-E",
+                "-",
+                "-t",
+                session,
+            ]
         )
 
     def attach_command(self, session_id: str) -> list[str] | None:
@@ -220,3 +266,14 @@ class SessionLifecycle:
         if session:
             cmd.extend(["-t", session])
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def _capture_output(cmd: list[str]) -> str | None:
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    text = result.stdout.strip()
+    return text or None

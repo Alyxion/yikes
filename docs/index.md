@@ -1,14 +1,14 @@
-# Yikes
+# yikes!
 
-Yikes is a runtime layer for **Claude Code** and **Codex CLI**. It gives Python apps, web backends, and terminal users one consistent way to start sessions, choose where they run, choose how they are driven, attach MCPs, manage credentials, and overtake long-running interactive work.
+yikes! is a runtime layer for **Claude Code** and **Codex CLI**. It gives Python apps, web backends, and terminal users one consistent way to start sessions, choose where they run, choose how they are driven, attach MCPs, manage credentials, and overtake long-running interactive work.
 
-The key idea is simple: choose **where** the agent runs (`host`, `docker`, remote machines in the future) separately from **how** Yikes drives it (`cli`, `tmux`, API in the future). That keeps fast headless calls, real interactive tmux sessions, Docker isolation, and future remote servers composable instead of forcing them into one overloaded mode switch.
+The key idea is simple: choose **where** the agent runs (`host`, `docker`, remote machines in the future) separately from **how** yikes! drives it (`cli`, `tmux`, API in the future). That keeps fast headless calls, real interactive tmux sessions, Docker isolation, and future remote servers composable instead of forcing them into one overloaded mode switch.
 
 ---
 
-## What Yikes Does
+## What yikes! Does
 
-Yikes is designed as one runtime with multiple faces:
+yikes! is designed as one runtime with multiple faces:
 
 ```mermaid
 flowchart LR
@@ -23,7 +23,7 @@ flowchart LR
     engine --> drv_remote[remote-server driver]
     drv_tmux --> ai_tmux[("claude / codex<br/>interactive TUI in tmux")]
     drv_direct --> ai_direct[("claude -p --output-format stream-json<br/>codex app-server / codex exec --json")]
-    drv_remote --> ai_remote[("remote Yikes server<br/>Claude/Codex session")]
+    drv_remote --> ai_remote[("remote yikes! server<br/>Claude/Codex session")]
     classDef face fill:#eef,stroke:#669
     classDef driver fill:#efe,stroke:#696
     classDef agent fill:#fee,stroke:#966
@@ -34,15 +34,18 @@ flowchart LR
 
 1. **Terminal app** — `yikes` opens a full-screen control surface by default.
 2. **Python library** — Python code can create sessions, send prompts, inspect status, and use the same command registry as the UI.
-3. **Web backend surface** — web apps can embed Yikes behind an iframe-plus-chat workflow without owning Claude/Codex process control.
+3. **Web backend surface** — web apps can embed yikes! behind an iframe-plus-chat workflow without owning Claude/Codex process control.
 4. **Shared runtime** — the same service layer owns backend selection, location/driver mapping, policy, credentials, MCP routing, sessions, and attach commands.
 
-The UI now separates **where** a session runs from **how** Yikes drives it:
+The UI keeps session navigation visible and moves rarely changed configuration into commands:
 
-- Location: `host`, `docker`, or planned `remote`.
-- Driver: `cli`, `tmux`, or planned `api`.
+- Session tabs live across the top and represent reconnectable durable sessions.
+- The sidebar shows compact status plus session actions only.
+- `/backend`, `/location`, `/driver`, `/model`, `/complexity`, `/web`, `/dirs`, `/mcp`, and `/new` are the canonical controls.
+- Location is `host`, `docker`, or planned `remote`.
+- Driver is `cli`, `tmux`, or planned `api`.
 
-The active implementation maps those controls onto the current runtime slots: host+cli, host+tmux, docker+cli, and docker+tmux. Remote access is handled by a Yikes-owned server/control plane rather than Claude Remote Control.
+The active implementation maps those controls onto the current runtime slots: host+cli, host+tmux, docker+cli, and docker+tmux. Remote access is handled by a yikes!-owned server/control plane rather than Claude Remote Control.
 
 ```mermaid
 flowchart TB
@@ -55,7 +58,7 @@ flowchart TB
 
     location -->|host| host[Host machine]
     location -->|docker| docker[Docker sandbox]
-    location -->|remote| remote[Remote machine / Yikes server<br/>future]
+    location -->|remote| remote[Remote machine / yikes! server<br/>future]
 
     host --> host_driver{Driver}
     docker --> docker_driver{Driver}
@@ -69,7 +72,7 @@ flowchart TB
     docker_driver -->|tmux| docker_tmux[Interactive TUI in tmux inside container]
     docker_driver -->|api| docker_api[Structured API inside container<br/>future]
 
-    remote_driver -->|api| remote_api[Yikes remote API<br/>future]
+    remote_driver -->|api| remote_api[yikes! remote API<br/>future]
 
     host_tmux -. forbidden .- bad1["claude -p / codex exec"]
     docker_tmux -. forbidden .- bad2["claude -p / codex exec"]
@@ -94,7 +97,7 @@ The library and CLI accept these as one conceptual pair. Sensible defaults:
 - `host + tmux` if the request needs the local interactive TUI or human attach.
 - `docker + cli` when isolation, persistent sandbox state, or host-MCP bridging into a container is required.
 - `docker + tmux` when isolation and real TUI overtake are both required.
-- `remote + api` for configured Yikes servers or remote machines once that transport is active.
+- `remote + api` for configured yikes! servers or remote machines once that transport is active.
 - Explicit override always wins.
 
 ---
@@ -112,7 +115,7 @@ The library and CLI accept these as one conceptual pair. Sensible defaults:
 
 - Multi-user hosted SaaS. A local/server session manager is in scope; shared public hosting is not.
 - Re-implementing either CLI's prompt parsing.
-- Hosting an MCP server ourselves (we *consume* both CLIs; exposing a Yikes MCP surface is separate work).
+- Hosting an MCP server ourselves (we *consume* both CLIs; exposing a yikes! MCP surface is separate work).
 - Replacing the native Claude/Codex TUIs. The current Textual app is a yikes control surface over the shared service layer, not a reimplementation of either backend UI.
 
 ---
@@ -130,7 +133,9 @@ tmux gives us:
 
 tmux is not the semantic control plane when a backend exposes a structured protocol. It is the resilient TUI transport and the human-inspection path. It can be used locally or inside Docker. Direct subprocess is the fast path for headless work, and remote-server is the future multi-client attach path.
 
-If no `cwd` is passed for a tmux-backed session, Yikes allocates a random workspace where the session starts. Local tmux sessions get a temporary host directory. Docker+tmux sessions get a random directory inside the container volume rather than silently mounting the caller's host cwd. Generated workspaces may have their first-run trust prompt confirmed automatically; explicit directories are left for the user to approve or overtake manually.
+If no `cwd` is passed for a tmux-backed session, yikes! allocates a random workspace where the session starts. Local tmux sessions get a temporary host directory. Docker sessions without an explicit directory get a random directory inside the container volume rather than silently mounting the caller's host cwd. Generated workspaces may have their first-run trust prompt confirmed automatically; explicit directories are left for the user to approve or overtake manually.
+
+When a persisted tmux session is restored from the terminal UI, yikes! captures the last several hundred tmux pane lines and writes them back into the visible log before the user sends the next turn. That makes CLI restarts a reconnect, not a blank new control surface.
 
 ---
 
@@ -140,7 +145,7 @@ If no `cwd` is passed for a tmux-backed session, Yikes allocates a random worksp
 |---|---|
 | **Backend** | One of `claude` or `codex`. The agent CLI we drive. |
 | **Location** | Where the backend runs: `host`, `docker`, or future `remote`. |
-| **Driver** | How Yikes drives that backend: `cli`, `tmux`, or future `api`. |
+| **Driver** | How yikes! drives that backend: `cli`, `tmux`, or future `api`. |
 | **Session** | A single conversation with a backend. Has a stable ID, a transcript, an event stream. |
 | **Pane** | The tmux pane that hosts a session when the driver is `tmux`. |
 | **Event** | A typed message we surface to the caller (`StreamDelta`, `LineRevised`, `ToolUse`, `ApprovalRequest`, `TurnComplete`, …). |
@@ -155,7 +160,7 @@ If no `cwd` is passed for a tmux-backed session, Yikes allocates a random worksp
 - [tmux Layer](tmux-layer.md) and [Streaming & Updates](streaming.md) are the implementation core.
 - [Python Library](python-library.md) and [CLI Wrapper](cli-wrapper.md) describe the public faces.
 - [Embedding](embedding.md) covers Python/web embedding, including iframe-plus-chat editor use cases.
-- [OpenHort Parity](openhort-parity.md) tracks what Yikes must own before OpenHort removes duplicated functionality.
+- [OpenHort Parity](openhort-parity.md) tracks what yikes! must own before OpenHort removes duplicated functionality.
 - [Roadmap](roadmap.md) has the phased plan and the open questions we need to resolve before writing code.
 
 Mermaid diagrams are interactive. Click any diagram, or focus it and press `Enter`, to open a larger view with zoom controls.

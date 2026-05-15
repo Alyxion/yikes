@@ -71,14 +71,14 @@ flowchart TB
 
 ## Workspaces
 
-When the caller passes an explicit `cwd`, tmux starts there and Yikes does not auto-confirm trust prompts. A user can attach and approve or deny with the native CLI.
+When the caller passes an explicit `cwd`, tmux starts there and yikes! does not auto-confirm trust prompts. A user can attach and approve or deny with the native CLI.
 
 When no `cwd` is passed, tmux-backed sessions receive a generated workspace:
 
 - local tmux: a random host directory such as `/tmp/yikes-tmux-*`
 - Docker+tmux: a random container directory such as `/workspace/session-<id>`
 
-Generated workspaces are intentionally empty Yikes-owned roots, so the startup trust prompt can be confirmed automatically. This avoids accidentally treating the caller's current host directory as trusted. Docker+tmux does not mount the host cwd in this case.
+Generated workspaces are intentionally empty yikes!-owned roots, so the startup trust prompt can be confirmed automatically. This avoids accidentally treating the caller's current host directory as trusted. Docker+tmux does not mount the host cwd in this case.
 
 ## Overtake / Attach
 
@@ -101,7 +101,7 @@ Docker+tmux attach looks like:
 docker exec -it yksb-... tmux -S /workspace/yikes-tmux.sock attach -t yikes-codex
 ```
 
-This is the "real overtake" path: the human terminal attaches to the same pane that Yikes created. The CLI process may crash or exit; the tmux session and Docker container can continue running until explicitly closed.
+This is the "real overtake" path: the human terminal attaches to the same pane that yikes! created. The CLI process may crash or exit; the tmux session and Docker container can continue running until explicitly closed.
 
 ## Lifecycle
 
@@ -221,7 +221,7 @@ async def send_text(self, pane, text, *, bracketed_paste=False):
 
 `-d` deletes the buffer after pasting (avoid leaking secrets in tmux's buffer list).
 
-After pasting, Yikes submits with `C-m`. In Codex's multi-line composer, a plain named `Enter` can leave the draft in the input box; `C-m` has been verified against the real TUI.
+After pasting, yikes! submits Claude with `C-m`. Codex's multi-line composer can keep an image-bearing draft in the input box after only one submit key, so yikes! sends `C-j` followed by `C-m` for Codex tmux sessions.
 
 ### Timing
 
@@ -348,7 +348,7 @@ The command string passed to `new-session` is built from argv with shell-safe qu
 | Sending before TUI is ready | Sentinel-wait; never sleep arbitrarily. |
 | TUI uses alternate screen → scrollback lost | Pass `--no-alt-screen` to codex; Claude Code already uses primary screen for most output. |
 | Approving the wrong modal after a redraw | Re-read the bottom rows immediately before sending approval keys and compare against the stored prompt fingerprint. |
-| Remote/local path mismatch for images and `@path` references | Resolve paths on the machine where the AI process runs; copy or reject local-only paths before pasting. |
+| Remote/local path mismatch for images and `@path` references | Host tmux uses local paths directly. Docker tmux copies images into `/workspace/yikes-attachments/` before pasting. Future remote hosts must copy or reject local-only paths before pasting. |
 | UTF-8 and wide glyph drift between tmux and pyte | Set `LANG`/`LC_CTYPE`, test wide glyph fixtures, and verify `tmux-256color` terminfo exists. |
 | Subprocess fork overhead for `capture-pane` polling | Don't poll — use `%output`. `capture-pane` only for on-demand snapshots. |
 

@@ -97,7 +97,43 @@ def test_server_command_wires_websocket_server(monkeypatch, tmp_path, capsys) ->
     assert getattr(config, "websocket_url") == "ws://127.0.0.1:8999"
     assert getattr(config, "require_token") is False
     assert captured["served"] is True
-    assert "Yikes server listening" in output
+    assert "yikes! server listening" in output
+
+
+def test_server_command_hashes_bootstrap_token_from_env(monkeypatch, tmp_path, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeServer:
+        def __init__(self, handler: object, config: object) -> None:
+            captured["handler"] = handler
+            captured["config"] = config
+
+        async def serve_forever(self) -> None:
+            captured["served"] = True
+
+    monkeypatch.setattr(yikes.remote, "YikesRemoteServer", FakeServer)
+    monkeypatch.setenv("YIKES_SERVER_TOKEN", "local-secret")
+    store = tmp_path / "tokens.json"
+
+    assert (
+        cli.main(
+            [
+                "server",
+                "--token-store",
+                str(store),
+                "--event-store",
+                str(tmp_path / "events"),
+                "--bootstrap-token-env",
+                "YIKES_SERVER_TOKEN",
+            ]
+        )
+        == 0
+    )
+
+    raw = store.read_text()
+    assert "local-secret" not in raw
+    assert "bootstrap:YIKES_SERVER_TOKEN" in raw
+    assert "No bearer tokens found" not in capsys.readouterr().err
 
 
 def test_sessions_command_lists_durable_sessions(tmp_path, capsys) -> None:

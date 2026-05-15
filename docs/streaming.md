@@ -83,18 +83,18 @@ We map each backend's native event types to engine events directly. Latency is b
 
 ## Pipeline (remote-server driver)
 
-Remote-server drivers consume Yikes-native events from another Yikes process over HTTP/WebSocket:
+Remote-server drivers consume yikes!-native events from another yikes! process over HTTP/WebSocket:
 
 ```mermaid
 flowchart LR
-    src[("remote Yikes server<br/>event replay + live stream")] --> parse[remote adapter parser]
+    src[("remote yikes! server<br/>event replay + live stream")] --> parse[remote adapter parser]
     parse --> evbus[engine event bus]
     evbus --> status["SessionReady / RemoteSessionInfo"]
     evbus --> stream["StreamDelta"]
     evbus --> approval["ApprovalRequest"]
 ```
 
-Claude Remote Control is not this path. It is a remote-human control UI owned by Claude. For OpenHort and web clients, the remote path is a Yikes server that owns the Claude/Codex process and streams normalized Yikes events.
+Claude Remote Control is not this path. It is a remote-human control UI owned by Claude. For OpenHort and web clients, the remote path is a yikes! server that owns the Claude/Codex process and streams normalized yikes! events.
 
 ## Frame sync (DECSET 2026)
 
@@ -144,7 +144,7 @@ class Snapshot:
     ts: float
 ```
 
-For the `tmux` driver, snapshots come from our pyte `screen.display`. For the `direct` driver, we maintain a virtual "rendered" buffer of accumulated assistant text and tool output — there's no actual screen, so the snapshot is just "what would a user have seen if this ran in a terminal." For the future `remote-server` driver, snapshots are replayed from the remote Yikes session state.
+For the `tmux` driver, snapshots come from our pyte `screen.display`. For the `direct` driver, we maintain a virtual "rendered" buffer of accumulated assistant text and tool output — there's no actual screen, so the snapshot is just "what would a user have seen if this ran in a terminal." For the future `remote-server` driver, snapshots are replayed from the remote yikes! session state.
 
 ## Event contract for callers
 

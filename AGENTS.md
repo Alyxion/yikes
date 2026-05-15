@@ -2,16 +2,16 @@
 
 ## Runtime Model
 
-Yikes has two user-facing runtime axes:
+yikes! has two user-facing runtime axes:
 
 - **Location** defines where the backend runs: `host`, `docker`, or future `remote`.
-- **Driver** defines how Yikes drives that backend: `cli`, `tmux`, or future `api`.
+- **Driver** defines how yikes! drives that backend: `cli`, `tmux`, or future `api`.
 
 Do not collapse these concepts back into one flat mode selector. Docker and tmux are not mutually exclusive; Docker is a location and tmux is a driver/transport.
 
 ## tmux Enforcement
 
-When the selected driver is `tmux`, Yikes must run the real interactive backend UI.
+When the selected driver is `tmux`, yikes! must run the real interactive backend UI.
 
 Required:
 

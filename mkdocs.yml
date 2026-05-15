@@ -1,7 +1,7 @@
-site_name: yikes
+site_name: yikes!
 site_description: A runtime layer for Claude Code and Codex CLI across host, Docker, tmux, Python, and web backends.
 repo_url: https://github.com/michael-ikemann/yikes
-repo_name: yikes
+repo_name: yikes!
 edit_uri: edit/main/docs/
 
 theme:

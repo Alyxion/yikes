@@ -1,22 +1,22 @@
 # OpenHort Alignment Change
 
-This document records how Yikes changed after reviewing OpenHort's current concept. It exists so future changes explain both the technical delta and the migration reason.
+This document records how yikes! changed after reviewing OpenHort's current concept. It exists so future changes explain both the technical delta and the migration reason.
 
 ## What Changed
 
-1. Added [OpenHort Parity Contract](../openhort-parity.md) as the migration checklist for moving agent/session functionality out of OpenHort and into Yikes.
-2. Added [Embedding Yikes](../embedding.md) to document Python access and the iframe-plus-chatbox website editor use case.
+1. Added [OpenHort Parity Contract](../openhort-parity.md) as the migration checklist for moving agent/session functionality out of OpenHort and into yikes!.
+2. Added [Embedding yikes!](../embedding.md) to document Python access and the iframe-plus-chatbox website editor use case.
 3. Added a real Python `Session` facade in `yikes.services`.
 4. Exported `Session` from `yikes.__init__`.
 5. Added a test proving `ChatService.create_session()` can be embedded from Python without using the TUI.
-6. Added `DurableSessionManager` / `DurableSessionMeta` for file-backed Yikes session metadata.
+6. Added `DurableSessionManager` / `DurableSessionMeta` for file-backed yikes! session metadata.
 7. Added Docker sandbox session primitives (`SandboxManager`, `SandboxSession`) and cleanup reaper helpers.
 8. Added `TokenStore` for hashed temporary/permanent bearer tokens.
 9. Removed Claude Remote Control from the registered Claude driver list and from the real integration matrix.
 10. Added MCP config/filtering and stdio-to-SSE proxy primitives.
 11. Added `CredentialBroker` with explicit grants and env/static/callback/Claude credential providers.
 12. Added `EventLog` and a minimal WebSocket remote command layer (`RemoteCommandHandler`, `YikesRemoteServer`).
-13. Added `RemoteClient` for Python callers that attach to a running Yikes server without importing the TUI.
+13. Added `RemoteClient` for Python callers that attach to a running yikes! server without importing the TUI.
 14. Added `yikes token` and `yikes server` CLI commands so remote-server mode can be bootstrapped outside Python code.
 15. Remote-created sessions now accept the same runtime settings as local sessions: web search, read roots, write roots, and MCP servers.
 16. Promoted Docker to a selectable `Driver.DOCKER` for Claude and Codex.
@@ -31,6 +31,11 @@ This document records how Yikes changed after reviewing OpenHort's current conce
 25. Added generated workspaces for tmux-backed sessions without explicit `cwd`: local tmux gets a random host temp dir, Docker+tmux gets `/workspace/session-<id>` in the container volume.
 26. Added startup handling for generated workspaces: Claude/Codex trust prompts are auto-confirmed only for generated workspaces, and Codex update prompts are suppressed with a per-session home/version file rather than updating or mutating the user's real Codex home.
 27. Split the user-facing runtime controls into location (`host`, `docker`, future `remote`) and driver (`cli`, `tmux`, future `api`). The older internal `Driver` enum still maps these combinations onto the current implementation.
+28. Added image attachment plumbing for the terminal app, Python facade, host drivers, and Docker drivers. `Ctrl+V` now performs smart paste, `Ctrl+O` forces image-only paste, pasted or dragged image file paths attach to the next turn, and Docker sessions copy those files into `/workspace/yikes-attachments/` before sending them.
+29. Simplified the terminal UI: persistent configuration dropdowns moved out of the sidebar, sessions are shown as top tabs, and existing tmux sessions replay recent pane output when restored.
+30. Added `/new [cwd]` to start a fresh session while preserving remembered defaults. `/clear` now remains the command for clearing the visible/current conversation without switching session identity.
+31. Changed Docker sessions without an explicit directory so they start in an isolated in-container workspace and do not mount the caller's host cwd.
+32. Documented the Docker server-first target: Docker and remote runtimes should both be controlled through an authenticated yikes! server protocol, with `docker exec` limited to bootstrap, attach, and debugging.
 
 ## How It Changed
 
@@ -120,14 +125,14 @@ yikes attach <sandbox-id> --print-only
 # docker exec -it yksb-... tmux -S /workspace/yikes-tmux.sock attach -t yikes-codex
 ```
 
-When a Docker session has host MCPs attached, Yikes starts host-side SSE proxies and passes `http://host.docker.internal:<port>/sse` endpoints into the container. The working directory and configured read/write roots are mounted into `/workspace/project`, `/workspace/read-*`, and `/workspace/write-*`.
+When a Docker session has host MCPs attached, yikes! starts host-side SSE proxies and passes `http://host.docker.internal:<port>/sse` endpoints into the container. The working directory and configured read/write roots are mounted into `/workspace/project`, `/workspace/read-*`, and `/workspace/write-*`.
 
 Docker auth handling is deliberately ephemeral:
 
 - Claude receives host env keys/tokens such as `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` when available.
 - Codex receives a copy of `~/.codex/auth.json` at `/workspace/home/.codex/auth.json` inside the container.
 - Codex also receives a generated `version.json` with the current update prompt dismissed so the TUI does not block or run an updater in automation.
-- `/workspace/home` is tmpfs, so those files are not stored in the Docker image or Yikes metadata.
+- `/workspace/home` is tmpfs, so those files are not stored in the Docker image or yikes! metadata.
 
 MCP routing and credential grants now have standalone APIs:
 
@@ -141,7 +146,7 @@ secret_env = CredentialBroker().build_secret_env(
 )
 ```
 
-Remote Yikes command handling is now available without introducing an OpenHort adapter:
+Remote yikes! command handling is now available without introducing an OpenHort adapter:
 
 ```python
 from yikes import RemoteCommandHandler, TokenStore
@@ -179,11 +184,11 @@ The token command prints plaintext token material only once. The token store kee
 OpenHort shows that the central abstraction cannot be a terminal app owning a subprocess. The central abstraction must be:
 
 ```text
-client -> Yikes session manager -> runtime backend -> Claude/Codex
+client -> yikes! session manager -> runtime backend -> Claude/Codex
 ```
 
 Clients include the terminal UI, CLI commands, Python code, a web backend, and OpenHort. Disconnecting a client must not kill the runtime session.
 
 ## Note On Remote Control
 
-Claude Remote Control is not treated as a Yikes chat runtime. It is a Claude human remote UI. The replacement concept for OpenHort integration is `remote-server`: a Yikes-owned HTTP/WebSocket control surface with scoped bearer tokens.
+Claude Remote Control is not treated as a yikes! chat runtime. It is a Claude human remote UI. The replacement concept for OpenHort integration is `remote-server`: a yikes!-owned HTTP/WebSocket control surface with scoped bearer tokens.

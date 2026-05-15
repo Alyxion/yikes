@@ -23,7 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in minimal dev envs
 if typer:
     app = typer.Typer(
         add_completion=False,
-        help="Yikes terminal app and chatbot smoke tools.",
+        help="yikes! terminal app and chatbot smoke tools.",
     )
 
     @app.command("chat-smoke")
@@ -108,7 +108,7 @@ if typer:
 
     @app.command("close")
     def close(
-        session_id: str = typer.Argument(..., help="Yikes session ID to close."),
+        session_id: str = typer.Argument(..., help="yikes! session ID to close."),
         runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
         sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
     ) -> None:
@@ -119,7 +119,7 @@ if typer:
 
     @app.command("attach")
     def attach(
-        session_id: str = typer.Argument(..., help="Yikes session ID to overtake."),
+        session_id: str = typer.Argument(..., help="yikes! session ID to overtake."),
         print_only: bool = typer.Option(False, "--print-only", help="Print attach command instead of execing it."),
         runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
         sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
@@ -172,11 +172,20 @@ if typer:
         auth: bool = typer.Option(True, "--auth/--no-auth", help="Require bearer-token auth."),
         token_store: Path = typer.Option(DEFAULT_TOKEN_STORE, "--token-store", help="Bearer-token store path."),
         event_store: Path = typer.Option(DEFAULT_EVENT_STORE, "--event-store", help="Session event-log directory."),
+        bootstrap_token_env: str | None = typer.Option(
+            None,
+            "--bootstrap-token-env",
+            help="Read an initial bearer token from this environment variable and hash it into the token store.",
+        ),
     ) -> None:
         from .remote import RemoteCommandHandler, RemoteServerConfig, YikesRemoteServer
         from .tokens import TokenStore
 
         tokens = TokenStore(token_store)
+        if bootstrap_token_env:
+            bootstrap_token = os.environ.get(bootstrap_token_env)
+            if bootstrap_token:
+                tokens.add_existing(bootstrap_token, label=f"bootstrap:{bootstrap_token_env}", permanent=True)
         if auth and not tokens.list_tokens():
             typer.echo(
                 f"No bearer tokens found in {tokens.path}. Create one with: yikes token --store {tokens.path}",
@@ -185,7 +194,7 @@ if typer:
         config = RemoteServerConfig(host=host, port=port, require_token=auth)
         handler = RemoteCommandHandler(token_store=tokens, event_log=EventLog(event_store), require_token=auth)
         remote_server = YikesRemoteServer(handler, config)
-        typer.echo(f"Yikes server listening on {config.websocket_url} (auth: {'on' if auth else 'off'})")
+        typer.echo(f"yikes! server listening on {config.websocket_url} (auth: {'on' if auth else 'off'})")
         asyncio.run(remote_server.serve_forever())
 
 

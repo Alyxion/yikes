@@ -13,6 +13,7 @@ from yikes import (
     RuntimeKind,
     RuntimeRef,
     SandboxConfig,
+    DEFAULT_SERVER_COMMAND,
     SandboxManager,
     SessionState,
     SessionInventory,
@@ -99,7 +100,7 @@ def test_sandbox_run_command_contains_hardening_flags(tmp_path: Path) -> None:
     assert "--read-only" in cmd
     assert "--pids-limit" in cmd
     assert "example:latest" in cmd
-    assert cmd[-2:] == ["sleep", "infinity"]
+    assert cmd[-len(DEFAULT_SERVER_COMMAND):] == list(DEFAULT_SERVER_COMMAND)
     assert "/workspace/home:size=200m,nosuid" in cmd
 
 
@@ -240,6 +241,47 @@ def test_session_lifecycle_switches_to_durable_session_options(tmp_path: Path) -
     assert options.backend is Backend.CODEX
     assert options.driver is Driver.TMUX
     assert options.model == "gpt-5.5"
+    assert options.session_id == meta.id
+
+
+def test_session_lifecycle_snapshots_tmux_history(tmp_path: Path, monkeypatch) -> None:
+    runtime_store = tmp_path / "runtime"
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CLAUDE,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket="/tmp/yikes.sock", tmux_session="s1"),
+        cwd=tmp_path,
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stdout = "old line\nlatest line\n"
+
+        return Result()
+
+    monkeypatch.setattr("yikes.session_inventory.subprocess.run", fake_run)
+
+    text = SessionLifecycle(runtime_store=runtime_store, sandbox_store=tmp_path / "sandboxes").snapshot(meta.id, lines=25)
+
+    assert text == "old line\nlatest line"
+    assert calls[0] == [
+        "tmux",
+        "-S",
+        "/tmp/yikes.sock",
+        "capture-pane",
+        "-p",
+        "-J",
+        "-S",
+        "-25",
+        "-E",
+        "-",
+        "-t",
+        "s1",
+    ]
 
 
 def test_session_lifecycle_returns_attach_commands_for_tmux_and_docker_tmux(tmp_path: Path) -> None:
@@ -286,9 +328,33 @@ def test_docker_tmux_without_explicit_cwd_uses_container_workspace(tmp_path: Pat
 
     assert sandbox.meta.config.mounts == ()
     assert sandbox.meta.user_data["workspace"] == "/workspace/session-abcdef123456"
+    assert sandbox.meta.user_data["server_port"] == "8989"
+    assert "YIKES_SERVER_TOKEN" in sandbox.meta.config.secret_env
     assert settings.read_roots == (Path("/workspace/session-abcdef123456"),)
     assert settings.write_roots == (Path("/workspace/session-abcdef123456"),)
     assert settings.tmux_enabled is True
+
+
+def test_docker_cli_without_explicit_cwd_does_not_mount_host_directory(tmp_path: Path, monkeypatch) -> None:
+    sandbox_store = tmp_path / "sandboxes"
+    monkeypatch.setattr(drivers, "SandboxManager", lambda: SandboxManager(sandbox_store))
+
+    sandbox, settings = drivers._docker_session_for(
+        "codex",
+        tmp_path,
+        AgentSettings(tmux_enabled=False),
+        cwd_explicit=False,
+        session_id="fedcba9876543210",
+        use_tmux=False,
+    )
+
+    assert sandbox.meta.config.mounts == ()
+    assert sandbox.meta.user_data["workspace"] == "/workspace/session-fedcba987654"
+    assert sandbox.meta.user_data["server_port"] == "8989"
+    assert "YIKES_SERVER_TOKEN" in sandbox.meta.config.secret_env
+    assert settings.read_roots == (Path("/workspace/session-fedcba987654"),)
+    assert settings.write_roots == (Path("/workspace/session-fedcba987654"),)
+    assert settings.tmux_enabled is False
 
 
 def test_token_store_hashes_and_verifies_tokens(tmp_path: Path) -> None:
@@ -303,6 +369,8 @@ def test_token_store_hashes_and_verifies_tokens(tmp_path: Path) -> None:
     assert permanent not in raw
     assert store.verify(token) is True
     assert TokenStore(path).verify(permanent) is True
+    store.add_existing("provided-secret", label="docker", permanent=True)
+    assert TokenStore(path).verify("provided-secret") is True
 
     data = json.loads(path.read_text())
     assert "token_hash" in data["tokens"][0]

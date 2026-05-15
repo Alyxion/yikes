@@ -134,7 +134,7 @@ yikes -b codex cancel <id>      # uses turn/interrupt
 
 ## Phase 5 — Remote Server + Six-Slot Smoke Matrix (≈6 days)
 
-**Goal:** remote access is represented as a Yikes-owned server/session capability, and every backend/runtime test slot remains explicit.
+**Goal:** remote access is represented as a yikes!-owned server/session capability, and every backend/runtime test slot remains explicit.
 
 - `yikes server` local HTTP/WebSocket control plane.
 - Scoped bearer-token auth with hashed-at-rest tokens.
@@ -249,7 +249,7 @@ Remote-server introduces endpoints and bearer tokens. The default must not creat
 
 **Recommendation:**
 
-- The Yikes server binds to loopback by default. Non-loopback requires explicit `--remote-bind`, explicit bearer-token auth, and token material passed by file/env, never raw CLI args.
+- The yikes! server binds to loopback by default. Non-loopback requires explicit `--remote-bind`, explicit bearer-token auth, and token material passed by file/env, never raw CLI args.
 - Backend-native remote features such as Claude Remote Control or Codex WebSocket are internal implementation options only when explicitly chosen; they are not the public OpenHort/web contract.
 - Remote-server transcripts redact URLs/tokens and store endpoint labels, not secrets.
 - Local file/image attachments are validated against the backend host; if a path is local-only, reject unless a configured transfer hook copies it first.

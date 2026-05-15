@@ -52,7 +52,7 @@ class RemoteSessionRegistry:
 
 
 class RemoteCommandHandler:
-    """JSON command handler for remote Yikes clients."""
+    """JSON command handler for remote yikes! clients."""
 
     def __init__(
         self,
@@ -234,7 +234,7 @@ class YikesRemoteServer:
 
 
 class RemoteClient:
-    """Small async client for Python callers that attach to a Yikes server."""
+    """Small async client for Python callers that attach to a yikes! server."""
 
     def __init__(self, config: RemoteClientConfig | None = None) -> None:
         self.config = config or RemoteClientConfig()

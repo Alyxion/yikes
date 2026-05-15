@@ -2,7 +2,7 @@
 
 ## Runtime Model
 
-Yikes separates **where** a backend runs from **how** it is driven:
+yikes! separates **where** a backend runs from **how** it is driven:
 
 - Location: `host`, `docker`, future `remote`.
 - Driver: `cli`, `tmux`, future `api`.

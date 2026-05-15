@@ -1,6 +1,6 @@
 from .chatbot import Backend, ChatResult, Chatbot, Driver, run_goal_flow
 from .commands import CommandRegistry, CommandSuggestion, ModelRegistry
-from .domain import AgentSettings, ChatOptions, Complexity, McpServer, Message, MessageRole
+from .domain import AgentSettings, ChatOptions, Complexity, ImageAttachment, McpServer, Message, MessageRole
 from .errors import BackendUnavailable, DriverUnavailable, YikesError
 from .events import EventLog, EventRecord
 from .credentials import (
@@ -41,7 +41,7 @@ from .runtime import (
     RuntimeRef,
     SessionState,
 )
-from .sandbox import SandboxConfig, SandboxManager, SandboxSession
+from .sandbox import DEFAULT_SERVER_COMMAND, SandboxConfig, SandboxManager, SandboxSession
 from .services import ChatService, Conversation, Session
 from .session_inventory import CloseResult, SessionInventory, SessionLifecycle, SessionSummary
 from .tokens import TokenStore
@@ -73,6 +73,7 @@ __all__ = [
     "EnvCredentialProvider",
     "EventLog",
     "EventRecord",
+    "ImageAttachment",
     "Message",
     "MessageRole",
     "McpConfig",
@@ -89,6 +90,7 @@ __all__ = [
     "RemoteSessionRegistry",
     "RuntimeKind",
     "RuntimeRef",
+    "DEFAULT_SERVER_COMMAND",
     "SandboxConfig",
     "SandboxManager",
     "SandboxSession",

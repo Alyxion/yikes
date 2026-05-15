@@ -145,6 +145,9 @@ def test_slash_commands_are_handled_locally() -> None:
     assert "Available models for claude:" in conversation.handle_slash_command("/models")
     assert "sonnet (current)" in conversation.handle_slash_command("/models")
     assert conversation.handle_slash_command("/backend") == "Backend: claude"
+    old_session_id = conversation.options.session_id
+    assert conversation.handle_slash_command("/new") == "Started new session."
+    assert conversation.options.session_id != old_session_id
     assert conversation.handle_slash_command("/driver tmux") == "Driver set to tmux."
     assert conversation.options.driver is Driver.TMUX
     assert "not supported yet" in conversation.handle_slash_command("/mode remote")

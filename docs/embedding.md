@@ -1,6 +1,6 @@
-# Embedding Yikes
+# Embedding yikes!
 
-Yikes must be easy to use from Python because future products may embed it instead of launching the terminal UI. One target shape is a web page editor: the edited website is shown in an iframe and a chatbox below sends instructions to Yikes to modify the HTML.
+yikes! must be easy to use from Python because future products may embed it instead of launching the terminal UI. One target shape is a web page editor: the edited website is shown in an iframe and a chatbox below sends instructions to yikes! to modify the HTML.
 
 ## Current Python Surface
 
@@ -35,7 +35,7 @@ flowchart TB
     iframe[iframe: preview page]
     chat[chatbox below iframe]
     api[Python web backend]
-    yikes[Yikes Session]
+    yikes[yikes! Session]
     files[HTML/CSS/JS files]
 
     browser --> iframe
@@ -46,7 +46,7 @@ flowchart TB
     files --> iframe
 ```
 
-The browser should not talk directly to Claude or Codex. It talks to your Python backend, and the backend owns the Yikes session.
+The browser should not talk directly to Claude or Codex. It talks to your Python backend, and the backend owns the yikes! session.
 
 Minimal FastAPI-style sketch:
 
@@ -90,7 +90,7 @@ def chat(req: ChatRequest):
 
 For the later daemon/server implementation, this same route should call `Manager.get()` / `Manager.spawn()` instead of storing sessions in a process-local dict. The browser contract stays the same.
 
-If the session lives in a separate Yikes daemon, the backend can attach with the remote client instead of importing the local service:
+If the session lives in a separate yikes! daemon, the backend can attach with the remote client instead of importing the local service:
 
 ```python
 from yikes import AgentSettings, RemoteClient, RemoteClientConfig
@@ -107,7 +107,7 @@ answer = await client.prompt(created["session"]["session_id"], req.message)
 
 ## Required Editor Capabilities
 
-For iframe editing to be reliable, Yikes needs these capabilities at the manager/runtime layer:
+For iframe editing to be reliable, yikes! needs these capabilities at the manager/runtime layer:
 
 - stable session ID per browser editor tab
 - read/write directory grants for the site root

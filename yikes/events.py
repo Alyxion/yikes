@@ -25,7 +25,7 @@ class EventRecord:
 
 
 class EventLog:
-    """Append-only JSONL event store keyed by Yikes session ID."""
+    """Append-only JSONL event store keyed by yikes! session ID."""
 
     def __init__(self, store_dir: Path | None = None) -> None:
         self.store_dir = (store_dir or DEFAULT_EVENT_STORE).expanduser()

@@ -66,3 +66,34 @@ def test_tmux_result_markers_ignore_prompt_template() -> None:
 
     assert drivers._has_marked_result(prompt_screen, markers) is False
     assert drivers._extract_marked_result(result_screen, markers) == "OK"
+
+
+def test_codex_tmux_submit_sends_linefeed_then_carriage_return(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(drivers.time, "sleep", lambda _seconds: None)
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return object()
+
+    monkeypatch.setattr(drivers.subprocess, "run", fake_run)
+
+    drivers._tmux_submit(tmp_path / "sock", "session", cwd=tmp_path, backend="codex")
+
+    assert calls[0][-1] == "C-j"
+    assert calls[1][-1] == "C-m"
+
+
+def test_claude_tmux_submit_keeps_single_carriage_return(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> object:
+        calls.append(cmd)
+        return object()
+
+    monkeypatch.setattr(drivers.subprocess, "run", fake_run)
+
+    drivers._tmux_submit(tmp_path / "sock", "session", cwd=tmp_path, backend="claude")
+
+    assert len(calls) == 1
+    assert calls[0][-1] == "C-m"

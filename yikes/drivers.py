@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import shlex
+import secrets
 import socket
 import subprocess
 import tempfile
@@ -17,7 +18,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from .domain import AgentSettings, Backend, Driver, McpServer
+from .domain import ImageAttachment
 from .errors import BackendRunError, BackendUnavailable, DriverUnavailable
+from .attachments import prompt_with_image_references, prompt_with_mapped_image_references
 from .credentials import ClaudeCredentialProvider, CodexCredentialProvider
 from .mcp import McpConfig, McpServerConfig, resolve_servers
 from .mcp_proxy import ProxyManager
@@ -46,9 +49,10 @@ def ask_backend(
     settings: AgentSettings,
     cwd_explicit: bool = True,
     session_id: str | None = None,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     if driver.value == "direct":
-        return _ask_direct(backend.value, prompt, cwd=cwd, timeout=timeout, model=model, settings=settings)
+        return _ask_direct(backend.value, prompt, cwd=cwd, timeout=timeout, model=model, settings=settings, attachments=attachments)
     if driver.value == "tmux":
         return _ask_tmux(
             backend.value,
@@ -58,6 +62,7 @@ def ask_backend(
             timeout=timeout,
             model=model,
             settings=settings,
+            attachments=attachments,
         )
     if driver.value == "docker":
         return _ask_docker(
@@ -69,6 +74,7 @@ def ask_backend(
             model=model,
             session_id=session_id,
             settings=settings,
+            attachments=attachments,
         )
     if driver.value == "remote-control":
         return _ask_remote_control(backend.value, prompt, cwd=cwd, timeout=timeout, model=model, settings=settings)
@@ -83,11 +89,12 @@ def _ask_direct(
     timeout: float,
     model: str | None,
     settings: AgentSettings,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     if backend == "claude":
-        return _ask_claude_direct(prompt, cwd=cwd, timeout=timeout, model=model, settings=settings)
+        return _ask_claude_direct(prompt, cwd=cwd, timeout=timeout, model=model, settings=settings, attachments=attachments)
     if backend == "codex":
-        return _ask_codex_exec(prompt, cwd=cwd, timeout=timeout, model=model, settings=settings)
+        return _ask_codex_exec(prompt, cwd=cwd, timeout=timeout, model=model, settings=settings, attachments=attachments)
     raise DriverUnavailable(f"unknown backend: {backend}")
 
 
@@ -98,8 +105,10 @@ def _ask_claude_direct(
     timeout: float,
     model: str | None,
     settings: AgentSettings,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     require_binary("claude")
+    prompt = prompt_with_image_references(prompt, attachments)
     with _temporary_claude_mcp_config(settings) as mcp_config:
         argv = _claude_argv(prompt, model=model, mcp_config=mcp_config)
         try:
@@ -135,6 +144,7 @@ def _ask_codex_exec(
     timeout: float,
     model: str | None,
     settings: AgentSettings,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     require_binary("codex")
     with tempfile.TemporaryDirectory(prefix="yikes-codex-") as tmp:
@@ -152,6 +162,8 @@ def _ask_codex_exec(
         ]
         if model:
             argv.extend(["--model", model])
+        for attachment in attachments:
+            argv.extend(["--image", str(attachment.path)])
         argv.append(prompt)
         try:
             proc = run_process(argv, cwd=cwd, timeout=timeout)
@@ -178,6 +190,7 @@ def _ask_tmux(
     timeout: float,
     model: str | None,
     settings: AgentSettings,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     require_binary("tmux")
     socket_path, session_name = _ensure_local_tmux_session(backend, cwd, model=model, settings=settings)
@@ -188,7 +201,13 @@ def _ask_tmux(
             _confirm_local_codex_workspace_trust_if_needed(socket_path, session_name, cwd=cwd)
         _dismiss_local_codex_update_prompt_if_needed(socket_path, session_name, cwd=cwd)
     markers = _result_markers()
-    _tmux_paste(socket_path, session_name, _marked_prompt(prompt, markers), cwd=cwd)
+    _tmux_paste(
+        socket_path,
+        session_name,
+        _marked_prompt(prompt_with_image_references(prompt, attachments), markers),
+        cwd=cwd,
+        backend=backend,
+    )
     screen = _wait_for_tmux_result(socket_path, session_name, markers=markers, cwd=cwd, timeout=timeout)
     return _extract_marked_result(screen, markers)
 
@@ -203,6 +222,7 @@ def _ask_docker(
     model: str | None,
     session_id: str | None,
     settings: AgentSettings,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     require_binary("docker")
     proxy_manager = ProxyManager()
@@ -224,6 +244,7 @@ def _ask_docker(
                 timeout=timeout,
                 model=model,
                 settings=docker_settings,
+                attachments=attachments,
             )
         return _ask_inside_sandbox(
             sandbox,
@@ -232,6 +253,7 @@ def _ask_docker(
             timeout=timeout,
             model=model,
             settings=docker_settings,
+            attachments=attachments,
         )
     finally:
         proxy_manager.stop()
@@ -248,11 +270,12 @@ def _docker_session_for(
 ) -> tuple[SandboxSession, AgentSettings]:
     image = os.environ.get("YIKES_DOCKER_IMAGE", DEFAULT_IMAGE)
     manager = SandboxManager()
-    if use_tmux and not cwd_explicit:
+    if not cwd_explicit:
         container_workspace = Path(f"/workspace/session-{session_id[:12]}")
         mounts: tuple[tuple[str, str, str], ...] = ()
         container_settings = _container_ephemeral_settings(settings, container_workspace)
-        label = f"docker-tmux-{backend}-{session_id[:12]}"
+        mode = "tmux" if use_tmux else "cli"
+        label = f"docker-{mode}-{backend}-{session_id[:12]}"
     else:
         container_workspace = Path("/workspace/project")
         mounts, container_settings = _docker_mounts(cwd, settings)
@@ -260,12 +283,14 @@ def _docker_session_for(
     existing = manager.find_running(image=image, label=label)
     if existing is not None:
         return existing, container_settings
+    server_token = secrets.token_urlsafe(32)
+    secret_env = _docker_secret_env() | {"YIKES_SERVER_TOKEN": server_token}
     return manager.create(
         SandboxConfig(
             image=image,
             mounts=mounts,
             env={"DISABLE_AUTOUPDATER": "1"},
-            secret_env=_docker_secret_env(),
+            secret_env=secret_env,
         ),
         user_data={
             "label": label,
@@ -273,6 +298,7 @@ def _docker_session_for(
             "cwd": str(cwd),
             "cwd_explicit": "true" if cwd_explicit else "false",
             "workspace": str(container_workspace),
+            "server_port": "8989",
         },
     ), container_settings
 
@@ -285,6 +311,7 @@ def _ask_docker_tmux(
     timeout: float,
     model: str | None,
     settings: AgentSettings,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     _prepare_container_auth(sandbox, backend)
     socket_path = Path("/workspace/yikes-tmux.sock")
@@ -332,8 +359,15 @@ def _ask_docker_tmux(
         if sandbox.meta.user_data.get("cwd_explicit") == "false":
             _confirm_container_codex_workspace_trust_if_needed(sandbox, socket_path, session_name)
         _dismiss_container_codex_update_prompt_if_needed(sandbox, socket_path, session_name)
+    mapped_attachments = _copy_attachments_to_sandbox(sandbox, attachments)
     markers = _result_markers()
-    _container_tmux_paste(sandbox, socket_path, session_name, _marked_prompt(prompt, markers))
+    _container_tmux_paste(
+        sandbox,
+        socket_path,
+        session_name,
+        _marked_prompt(prompt_with_mapped_image_references(prompt, mapped_attachments), markers),
+        backend=backend,
+    )
     screen = _wait_for_container_tmux_result(sandbox, socket_path, session_name, markers=markers, timeout=timeout)
     return _extract_marked_result(screen, markers)
 
@@ -346,12 +380,14 @@ def _ask_inside_sandbox(
     timeout: float,
     model: str | None,
     settings: AgentSettings,
+    attachments: tuple[ImageAttachment, ...] = (),
 ) -> str:
     turn_id = uuid4().hex
     _prepare_container_auth(sandbox, backend)
     result_path = Path(f"/tmp/yikes-result-{turn_id}.txt")
     err_path = Path(f"/tmp/yikes-stderr-{turn_id}.txt")
     mcp_config = Path(f"/tmp/yikes-mcp-{turn_id}.json") if backend == "claude" and settings.mcp_servers else None
+    mapped_attachments = _copy_attachments_to_sandbox(sandbox, attachments)
     if mcp_config is not None:
         sandbox.write_file(str(mcp_config), json.dumps({"mcpServers": _mcp_payload(settings)}))
     command = _backend_shell_command(
@@ -362,8 +398,9 @@ def _ask_inside_sandbox(
         model=model,
         settings=settings,
         mcp_config_path=mcp_config,
+        attachments=mapped_attachments,
     )
-    command = f"cd /workspace/project && {command}"
+    command = f"cd {shlex.quote(_sandbox_workspace(sandbox))} && {command}"
     proc = sandbox.exec(
         ["sh", "-lc", command],
         capture_output=True,
@@ -398,6 +435,22 @@ def _ask_inside_sandbox(
     return _extract_backend_output(backend, str(output).strip())
 
 
+def _copy_attachments_to_sandbox(
+    sandbox: SandboxSession,
+    attachments: tuple[ImageAttachment, ...],
+) -> tuple[Path, ...]:
+    if not attachments:
+        return ()
+    target_dir = Path("/workspace/yikes-attachments")
+    sandbox.exec(["sh", "-lc", f"mkdir -p {shlex.quote(str(target_dir))}"], capture_output=True, text=True, timeout=10, check=True)
+    mapped: list[Path] = []
+    for attachment in attachments:
+        target = target_dir / f"{uuid4().hex[:12]}-{attachment.path.name}"
+        sandbox.write_file(str(target), attachment.path.read_bytes())
+        mapped.append(target)
+    return tuple(mapped)
+
+
 def _backend_shell_command(
     backend: str,
     prompt: str,
@@ -407,8 +460,10 @@ def _backend_shell_command(
     model: str | None,
     settings: AgentSettings,
     mcp_config_path: Path | None = None,
+    attachments: tuple[Path, ...] = (),
 ) -> str:
     if backend == "claude":
+        prompt = prompt_with_mapped_image_references(prompt, attachments)
         argv = _claude_argv(prompt, model=model, mcp_config=mcp_config_path)
         return f"DISABLE_AUTOUPDATER=1 {shlex.join(argv)} > {shlex.quote(str(result_path))} 2> {shlex.quote(str(err_path))}"
     if backend == "codex":
@@ -425,6 +480,8 @@ def _backend_shell_command(
         ]
         if model:
             argv.extend(["--model", model])
+        for attachment in attachments:
+            argv.extend(["--image", str(attachment)])
         argv.append(prompt)
         return f"{shlex.join(argv)} > /dev/null 2> {shlex.quote(str(err_path))}"
     raise DriverUnavailable(f"unknown backend: {backend}")
@@ -567,7 +624,7 @@ def _marked_prompt(prompt: str, markers: ResultMarkers) -> str:
     )
 
 
-def _tmux_paste(socket_path: Path, session_name: str, text: str, *, cwd: Path) -> None:
+def _tmux_paste(socket_path: Path, session_name: str, text: str, *, cwd: Path, backend: str) -> None:
     buffer_name = f"yikes-{uuid4().hex}"
     load = subprocess.run(
         ["tmux", "-S", str(socket_path), "load-buffer", "-b", buffer_name, "-"],
@@ -590,7 +647,15 @@ def _tmux_paste(socket_path: Path, session_name: str, text: str, *, cwd: Path) -
     )
     if paste.returncode != 0:
         raise BackendRunError("tmux paste-buffer failed", stdout=paste.stdout, stderr=paste.stderr)
-    subprocess.run(["tmux", "-S", str(socket_path), "send-keys", "-t", session_name, "C-m"], cwd=str(cwd), timeout=10, check=False)
+    _tmux_submit(socket_path, session_name, cwd=cwd, backend=backend)
+
+
+def _tmux_submit(socket_path: Path, session_name: str, *, cwd: Path, backend: str) -> None:
+    keys = ("C-j", "C-m") if backend == "codex" else ("C-m",)
+    for key in keys:
+        subprocess.run(["tmux", "-S", str(socket_path), "send-keys", "-t", session_name, key], cwd=str(cwd), timeout=10, check=False)
+        if backend == "codex":
+            time.sleep(0.08)
 
 
 def _confirm_local_workspace_trust_if_needed(socket_path: Path, session_name: str, *, cwd: Path) -> None:
@@ -758,7 +823,7 @@ def _container_tmux_session_alive(sandbox: SandboxSession, socket_path: Path, se
     return result.returncode == 0
 
 
-def _container_tmux_paste(sandbox: SandboxSession, socket_path: Path, session_name: str, text: str) -> None:
+def _container_tmux_paste(sandbox: SandboxSession, socket_path: Path, session_name: str, text: str, *, backend: str) -> None:
     buffer_name = f"yikes-{uuid4().hex}"
     load = sandbox.exec(
         ["tmux", "-S", str(socket_path), "load-buffer", "-b", buffer_name, "-"],
@@ -779,7 +844,15 @@ def _container_tmux_paste(sandbox: SandboxSession, socket_path: Path, session_na
     )
     if paste.returncode != 0:
         raise BackendRunError("container tmux paste-buffer failed", stdout=str(paste.stdout), stderr=str(paste.stderr))
-    sandbox.exec(["tmux", "-S", str(socket_path), "send-keys", "-t", session_name, "C-m"], capture_output=True, text=True, timeout=10, check=False)
+    _container_tmux_submit(sandbox, socket_path, session_name, backend=backend)
+
+
+def _container_tmux_submit(sandbox: SandboxSession, socket_path: Path, session_name: str, *, backend: str) -> None:
+    keys = ("C-j", "C-m") if backend == "codex" else ("C-m",)
+    for key in keys:
+        sandbox.exec(["tmux", "-S", str(socket_path), "send-keys", "-t", session_name, key], capture_output=True, text=True, timeout=10, check=False)
+        if backend == "codex":
+            time.sleep(0.08)
 
 
 def _confirm_container_workspace_trust_if_needed(sandbox: SandboxSession, socket_path: Path, session_name: str) -> None:
@@ -962,8 +1035,8 @@ def _ask_remote_control(
         return _ask_codex_remote_control(prompt, cwd=cwd, timeout=timeout, model=model, settings=settings)
     if backend == "claude":
         raise DriverUnavailable(
-            "Claude remote-control is not a supported Yikes driver. Use direct or tmux "
-            "for Claude chat, and use the future remote-server runtime for remote Yikes sessions."
+            "Claude remote-control is not a supported yikes! driver. Use direct or tmux "
+            "for Claude chat, and use the future remote-server runtime for remote yikes! sessions."
         )
     raise DriverUnavailable(f"unknown backend: {backend}")
 

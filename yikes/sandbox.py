@@ -14,6 +14,20 @@ VOLUME_PREFIX = "ykvol"
 DEFAULT_IMAGE = "yikes-sandbox:latest"
 DEFAULT_SANDBOX_STORE = Path.home() / ".yikes" / "sandboxes"
 DEFAULT_DOCKERFILE = Path(__file__).resolve().parent.parent / "docker" / "yikes-sandbox.Dockerfile"
+DEFAULT_SERVER_COMMAND = (
+    "yikes",
+    "server",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8989",
+    "--token-store",
+    "/workspace/home/.yikes/tokens.json",
+    "--event-store",
+    "/workspace/home/.yikes/events",
+    "--bootstrap-token-env",
+    "YIKES_SERVER_TOKEN",
+)
 
 
 @dataclass(frozen=True)
@@ -36,7 +50,7 @@ class SecurityProfile:
 @dataclass(frozen=True)
 class SandboxConfig:
     image: str = DEFAULT_IMAGE
-    command: tuple[str, ...] = ("sleep", "infinity")
+    command: tuple[str, ...] = DEFAULT_SERVER_COMMAND
     mounts: tuple[tuple[str, str, str], ...] = ()
     memory: str | None = None
     cpus: float | None = None

@@ -68,7 +68,7 @@ class DurableSessionMeta:
 
 
 class DurableSessionManager:
-    """File-backed registry for Yikes sessions.
+    """File-backed registry for yikes! sessions.
 
     This owns metadata only. Runtime drivers still own the actual process,
     tmux pane, Docker container, or remote server connection.

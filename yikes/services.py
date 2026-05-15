@@ -24,6 +24,7 @@ from .domain import (
     Driver,
     DriverMode,
     ExecutionLocation,
+    ImageAttachment,
     McpServer,
     Message,
     MessageRole,
@@ -32,11 +33,11 @@ from .drivers import ask_backend
 
 
 class ChatTransport(Protocol):
-    def ask(self, options: ChatOptions, prompt: str) -> str: ...
+    def ask(self, options: ChatOptions, prompt: str, attachments: tuple[ImageAttachment, ...] = ()) -> str: ...
 
 
 class BackendTransport:
-    def ask(self, options: ChatOptions, prompt: str) -> str:
+    def ask(self, options: ChatOptions, prompt: str, attachments: tuple[ImageAttachment, ...] = ()) -> str:
         return ask_backend(
             options.backend,
             options.driver,
@@ -47,6 +48,7 @@ class BackendTransport:
             model=options.model,
             session_id=options.session_id,
             settings=options.settings,
+            attachments=attachments,
         )
 
 
@@ -59,15 +61,28 @@ class Conversation:
     model_registry: ModelRegistry = field(default_factory=default_model_registry)
     driver_registry: DriverRegistry = field(default_factory=default_driver_registry)
 
-    def ask(self, text: str) -> str:
+    def ask(self, text: str, attachments: tuple[ImageAttachment, ...] = ()) -> str:
         self.messages.append(Message(MessageRole.USER, text))
         prompt = self.render_interactive_prompt(text) if self._uses_native_session_history() else self.render_prompt()
-        answer = self.transport.ask(self.options, prompt).strip()
+        answer = self._ask_transport(prompt, attachments).strip()
         self.messages.append(Message(MessageRole.ASSISTANT, answer))
         return answer
 
+    def _ask_transport(self, prompt: str, attachments: tuple[ImageAttachment, ...]) -> str:
+        try:
+            return self.transport.ask(self.options, prompt, attachments)
+        except TypeError:
+            return self.transport.ask(self.options, prompt)  # type: ignore[call-arg]
+
     def clear(self) -> None:
         self.messages.clear()
+
+    def start_new(self, *, cwd: Path | None = None) -> None:
+        self.messages.clear()
+        options = self.options.with_session_id(uuid4().hex)
+        if cwd is not None:
+            options = options.with_cwd(cwd)
+        self.options = options
 
     def set_model(self, model: str | None) -> None:
         self.options = self.options.with_model(model)
@@ -248,11 +263,11 @@ class Session:
     def messages(self) -> list[Message]:
         return self.conversation.messages
 
-    def ask(self, text: str) -> str:
-        return self.conversation.ask(text)
+    def ask(self, text: str, attachments: tuple[ImageAttachment, ...] = ()) -> str:
+        return self.conversation.ask(text, attachments)
 
-    def prompt(self, text: str) -> str:
-        return self.ask(text)
+    def prompt(self, text: str, attachments: tuple[ImageAttachment, ...] = ()) -> str:
+        return self.ask(text, attachments)
 
     def clear(self) -> None:
         self.conversation.clear()

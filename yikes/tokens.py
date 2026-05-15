@@ -69,6 +69,32 @@ class TokenStore:
         self._save()
         return token
 
+    def add_existing(
+        self,
+        token: str,
+        *,
+        label: str = "Provided Key",
+        permanent: bool = True,
+        duration_seconds: int | None = None,
+    ) -> None:
+        now = time.time()
+        expires_at = None if permanent else now + float(duration_seconds or 300)
+        self._tokens = [
+            record
+            for record in self._tokens
+            if not (record.label == label and record.permanent == permanent)
+        ]
+        self._tokens.append(
+            TokenRecord(
+                token_hash=self._hash(token),
+                label=label,
+                permanent=permanent,
+                created_at=now,
+                expires_at=expires_at,
+            )
+        )
+        self._save()
+
     def verify(self, token: str) -> bool:
         token_hash = self._hash(token)
         now = time.time()

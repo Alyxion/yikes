@@ -285,27 +285,32 @@ text = await quick(Backend.CLAUDE, "explain @src/auth.py")
 text, usage = await quick(Backend.CODEX, "summarise diff", return_usage=True)
 ```
 
-## Multi-line prompts, parts, attachments
+## Multi-line prompts and image attachments
 
-A prompt is a `str` or an iterable of `Part`:
+The current Python surface accepts plain text plus explicit image attachments:
 
 ```python
-from yikes import Part
+from pathlib import Path
 
-await session.turn([
-    Part.text("Review this image and the file:"),
-    Part.image("/path/to/screenshot.png"),
-    Part.file_ref("src/auth.py"),
-    Part.text("Focus on the token validation."),
-])
+from yikes import Backend, ChatService, Driver, ImageAttachment
+
+session = ChatService().create_session(Backend.CLAUDE, Driver.DIRECT)
+answer = session.ask(
+    "Review this screenshot.",
+    attachments=(ImageAttachment(Path("/path/to/screenshot.png")),),
+)
 ```
 
-- `Part.text(str)` — raw text.
-- `Part.image(path)` — adds native image input in direct mode, attaches via paste-buffer or `@path` in tmux mode, and in remote-server mode must resolve on the host where the backend process runs or be transferred explicitly.
-- `Part.file_ref(path)` — translates to `@path` for both backends, after validating that the path exists on the backend host.
-- `Part.from_stdin()` — for piped input.
+Image behavior is runtime-aware:
 
-For remote-server sessions, local paths are not assumed to exist remotely. The adapter either copies the file into the remote workspace through an explicit transfer hook or rejects the part with `AttachmentUnavailable`.
+- Host/direct Claude turns reference attached images with native `@path` file references.
+- Host/direct Codex turns use Codex's native `--image` flag.
+- Host/tmux turns paste image file references into the real interactive TUI.
+- Docker turns copy local image files into `/workspace/yikes-attachments/` before sending the turn, so Docker direct and Docker tmux sessions can see the same attachment.
+
+The terminal app uses the same attachment path. `Ctrl+V` performs smart paste: it imports an image from the OS clipboard when one is present, otherwise it inserts clipboard text. Pasting or dragging image file paths into the prompt attaches them to the next message. `Ctrl+O` remains available as an image-only paste shortcut.
+
+For future remote-server sessions, local paths must not be assumed to exist remotely. The adapter will either copy the file into the remote workspace through an explicit transfer hook or reject the attachment.
 
 ## Configuration
 

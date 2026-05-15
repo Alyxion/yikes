@@ -223,6 +223,13 @@ def default_command_registry() -> CommandRegistry:
         context.conversation.clear()
         return CommandResult("Conversation cleared.")
 
+    def new_command(context: CommandContext, arg: str) -> CommandResult:
+        parts = _split_args(arg)
+        cwd = Path(parts[0]).expanduser() if parts else None
+        context.conversation.start_new(cwd=cwd)
+        location = f" in {context.conversation.options.cwd}" if cwd is not None else ""
+        return CommandResult(f"Started new session{location}.")
+
     def model_command(context: CommandContext, arg: str) -> CommandResult:
         model = None if arg == "default" else arg
         if arg:
@@ -569,6 +576,7 @@ def default_command_registry() -> CommandRegistry:
 
     registry.register(CommandSpec("help", "Show available commands", help_command, aliases=("?",)))
     registry.register(CommandSpec("clear", "Clear this conversation", clear_command))
+    registry.register(CommandSpec("new", "Start a new session with the current defaults", new_command, usage="[cwd]"))
     registry.register(
         CommandSpec(
             "model",
@@ -587,7 +595,7 @@ def default_command_registry() -> CommandRegistry:
         )
     )
     registry.register(CommandSpec("status", "Show backend, location, driver, model, cwd, and message count", status_command))
-    registry.register(CommandSpec("sessions", "List known Yikes tmux, Docker, and remote sessions", sessions_command, aliases=("ps",)))
+    registry.register(CommandSpec("sessions", "List known yikes! tmux, Docker, and remote sessions", sessions_command, aliases=("ps",)))
     registry.register(
         CommandSpec(
             "switch",

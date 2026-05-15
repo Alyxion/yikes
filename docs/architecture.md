@@ -36,7 +36,7 @@ flowchart TB
     subgraph proc[Processes]
         ptmux[(tmux server<br/>dedicated socket)]
         pdirect[(claude / codex<br/>subprocess)]
-        premote[(Yikes server<br/>HTTP / WebSocket)]
+        premote[(yikes! server<br/>HTTP / WebSocket)]
     end
 
     cli --> ses
@@ -122,9 +122,9 @@ class Driver(Protocol):
     async def stop(self) -> None: ...
 ```
 
-The **direct driver** implements this against a plain subprocess or PTY. The **tmux driver** implements it against a managed tmux server on a dedicated socket. The **docker driver** implements it against a managed Docker sandbox. The **remote-server driver** implements it against a Yikes-owned HTTP/WebSocket control plane with scoped bearer-token auth.
+The **direct driver** implements this against a plain subprocess or PTY. The **tmux driver** implements it against a managed tmux server on a dedicated socket. The **docker driver** implements it against a managed Docker sandbox. The **remote-server driver** implements it against a yikes!-owned HTTP/WebSocket control plane with scoped bearer-token auth.
 
-For the `direct` driver, `send_key` is mostly a no-op for `claude -p` (one-shot, doesn't accept input mid-run) but is real for `codex app-server` (where cancellation is a JSON-RPC `turn/interrupt`). For remote access, Yikes should not depend on Claude Remote Control as a chat transport; remote clients attach to a Yikes server session.
+For the `direct` driver, `send_key` is mostly a no-op for `claude -p` (one-shot, doesn't accept input mid-run) but is real for `codex app-server` (where cancellation is a JSON-RPC `turn/interrupt`). For remote access, yikes! should not depend on Claude Remote Control as a chat transport; remote clients attach to a yikes! server session.
 
 ## Mode matrix
 
@@ -132,8 +132,8 @@ The six local/isolation combinations are first-class integration test targets. R
 
 | Backend | `direct` | `tmux` | `docker` | `remote-server` |
 |---|---|---|---|---|
-| Claude Code | `claude -p --output-format stream-json`, plus bidirectional stream-json where supported | `claude` in a managed tmux pane | `claude` inside a managed Docker sandbox with host MCP proxy URLs | Yikes server owns a Claude session and exposes Yikes events over HTTP/WebSocket |
-| Codex CLI | `codex app-server --listen stdio://` by default, `codex exec --json` for one-shot | `codex --no-alt-screen` in a managed tmux pane | `codex` inside a managed Docker sandbox with host MCP proxy URLs | Yikes server owns Codex app-server/thread state and exposes Yikes events over HTTP/WebSocket |
+| Claude Code | `claude -p --output-format stream-json`, plus bidirectional stream-json where supported | `claude` in a managed tmux pane | `claude` inside a managed Docker sandbox with host MCP proxy URLs | yikes! server owns a Claude session and exposes yikes! events over HTTP/WebSocket |
+| Codex CLI | `codex app-server --listen stdio://` by default, `codex exec --json` for one-shot | `codex --no-alt-screen` in a managed tmux pane | `codex` inside a managed Docker sandbox with host MCP proxy URLs | yikes! server owns Codex app-server/thread state and exposes yikes! events over HTTP/WebSocket |
 
 The current code still has a `remote-control` enum value as an integration-test placeholder and compatibility slot. It is intentionally not available in the interactive chat registry. The target runtime name for OpenHort integration is `remote-server`.
 
@@ -232,11 +232,11 @@ sequenceDiagram
     participant eng as Engine
     participant adp as Adapter
     participant drv as remote-server driver
-    participant srv as Yikes server
+    participant srv as yikes! server
 
     caller->>lib: attach(remote_url, bearer_token)
     lib->>eng: create remote client session
-    eng->>drv: connect to Yikes server
+    eng->>drv: connect to yikes! server
     drv->>srv: HTTPS/WebSocket + scoped bearer token
     srv-->>drv: session metadata + event replay
     caller->>lib: prompt(...)
@@ -248,7 +248,7 @@ sequenceDiagram
     drv-->>eng: StreamDelta / ToolUse / TurnComplete
 ```
 
-Remote server attach is not tmux over SSH and not Claude Remote Control. It is a Yikes-owned control plane. The remote host runs Yikes, owns the backend process and policy, and clients attach through authenticated HTTP/WebSocket APIs.
+Remote server attach is not tmux over SSH and not Claude Remote Control. It is a yikes!-owned control plane. The remote host runs yikes!, owns the backend process and policy, and clients attach through authenticated HTTP/WebSocket APIs.
 
 ## The event model
 
@@ -334,7 +334,7 @@ The terminal app persists the user's last interactive choices in a small JSON st
 
 The default path is `~/.config/yikes/state.json`, with `YIKES_STATE_PATH` available for tests and isolated runs. This state is part of the app shell, not the transcript: restarting yikes restores how the user wants to connect and reason, but it does not silently restore previous chat messages.
 
-Interactive chat drivers are intentionally limited to transports that can service a prompt/response turn. Claude Remote Control remains excluded from the interactive registry because it is a human remote UI, not a Yikes programmatic transport. The remote target for OpenHort is a Yikes server session.
+Interactive chat drivers are intentionally limited to transports that can service a prompt/response turn. Claude Remote Control remains excluded from the interactive registry because it is a human remote UI, not a yikes! programmatic transport. The remote target for OpenHort is a yikes! server session.
 
 ## Concurrency model
 
@@ -389,6 +389,8 @@ The verbs:
 
 The point: **the user's mental model is `yikes`, not `tmux`.** They never need to know which tmux socket we use, what the pane ID is, or that Claude Code and Codex have different native session-ID formats. `yikes ps` shows both, in the same columns, with the same lifecycle states.
 
+The terminal UI follows the same model: session navigation is shown as tabs at the top of the app, and the sidebar stays limited to compact status plus session actions. Backend, location, driver, model, complexity, web, MCP, and directory policy changes go through the shared slash-command registry so the Textual UI, Python library, and future web client all ask the same source for valid commands and completions.
+
 ```mermaid
 flowchart TB
     user["yikes ps"] --> mgr[Manager.list]
@@ -405,6 +407,7 @@ Internally:
 
 - **tmux driver** maintains pane-tagged metadata (`YIKES_BACKEND`, `YIKES_NATIVE_ID`, `YIKES_MODEL`) per session, queried via `tmux list-sessions -F '...'`.
 - **direct driver** (long-lived `codex app-server`) tracks its sessions in `~/.yikes/state/`.
+- **docker driver** stores sandbox/container metadata and should communicate with an in-container yikes! worker server after bootstrap. Docker and remote machines therefore share the same authenticated WebSocket protocol; local `docker exec` is kept for bootstrap, attach, and debug rather than normal prompt transport.
 - **remote-server driver** stores endpoint metadata (`remote_url`, environment/session labels, websocket endpoint, auth mode) in `~/.yikes/state/`, but never stores bearer tokens in transcripts.
 - The Manager unions all runtime sources and returns a single sorted list.
 

@@ -1,6 +1,6 @@
-<p align="center"><img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/logo-small.png" alt="Yikes" width="400"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/logo-small.png" alt="yikes!" width="400"></p>
 
-# yikes
+# yikes!
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Alyxion/yikes/blob/main/LICENSE)
@@ -9,7 +9,7 @@
 
 ### A terminal-first runtime for Claude Code and Codex CLI.
 
-Yikes gives Python apps, terminal users, and future web backends one consistent way to start, control, inspect, and overtake Claude Code and Codex sessions.
+yikes! gives Python apps, terminal users, and future web backends one consistent way to start, control, inspect, and overtake Claude Code and Codex sessions.
 
 It is built for the cases where a simple one-shot prompt is not enough: persistent sessions, real interactive tmux control, Docker isolation, MCP attachment, readable/writable directory policy, and a clean Python surface for embedding the same runtime elsewhere.
 
@@ -18,9 +18,10 @@ It is built for the cases where a simple one-shot prompt is not enough: persiste
 ## What you get
 
 - **Full terminal app by default** - running `yikes` opens the interactive control surface.
-- **Claude Code and Codex support** - switch backend, model, complexity, web search, and runtime from the UI or slash commands.
+- **Claude Code and Codex support** - switch backend, model, complexity, web search, and runtime through slash commands shared with Python/web callers.
 - **Host and Docker runtimes** - run locally or inside an isolated container.
-- **Real tmux sessions** - attach to long-running work and overtake the native interactive CLI when needed.
+- **Real tmux sessions** - attach to long-running work, reconnect from the top session tabs, and replay recent terminal output.
+- **Image attachments** - use Ctrl+V for smart paste, drag image file paths into the terminal app, or use Ctrl+O for image-only paste.
 - **MCP and directory policy** - configure tool servers plus readable and writable directories.
 - **Python-first core** - the UI and CLI sit on the same helper classes a web backend can use later.
 
@@ -35,7 +36,7 @@ poetry install
 poetry run yikes
 ```
 
-Yikes expects the backend CLIs you want to use to be installed and logged in for your user:
+yikes! expects the backend CLIs you want to use to be installed and logged in for your user:
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex)
@@ -53,16 +54,18 @@ poetry run yikes attach <session-id>     # overtake an attachable session
 poetry run yikes close <session-id>      # close one session
 ```
 
-Inside the app, slash commands such as `/backend`, `/location`, `/driver`, `/models`, `/web`, `/dirs`, `/mcp`, `/sessions`, and `/restart` are backed by the same command registry used by the Python layer.
+Inside the app, session tabs sit at the top and detailed configuration stays in slash commands. `/new` starts a fresh session, `/clear` clears the current visible conversation, and commands such as `/backend`, `/location`, `/driver`, `/models`, `/web`, `/dirs`, `/mcp`, `/sessions`, and `/restart` are backed by the same command registry used by the Python layer.
+
+To attach images in the terminal app, use `Ctrl+V` for smart paste: yikes! imports an image from the OS clipboard when one is present, otherwise it inserts clipboard text. Dragged or pasted image file paths attach to the next message. `Ctrl+O` forces image-only paste. Host sessions use the local path directly; Docker sessions copy the image into the sandbox before sending the turn.
 
 ---
 
 ## Runtime model
 
-Yikes separates two choices:
+yikes! separates two choices:
 
 - **Location** - where the agent runs: `host`, `docker`, and later remote machines.
-- **Driver** - how Yikes drives it: `cli`, `tmux`, and later structured API mode.
+- **Driver** - how yikes! drives it: `cli`, `tmux`, and later structured API mode.
 
 That keeps fast CLI calls, Docker isolation, and real interactive tmux sessions composable instead of hiding everything behind one overloaded mode switch.
 
@@ -71,14 +74,19 @@ That keeps fast CLI calls, Docker isolation, and real interactive tmux sessions 
 ## Python usage
 
 ```python
-from yikes import Backend, ChatService, Driver
+from pathlib import Path
+
+from yikes import Backend, ChatService, Driver, ImageAttachment
 
 conversation = ChatService().create_conversation(
     backend=Backend.CLAUDE,
     driver=Driver.DIRECT,
 )
 
-answer = conversation.ask("Hello, my name is Michael. What is 4 + 4?")
+answer = conversation.ask(
+    "What is shown here?",
+    attachments=(ImageAttachment(Path("screenshot.png").resolve()),),
+)
 print(answer)
 ```
 
