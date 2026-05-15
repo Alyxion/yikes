@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from .capabilities import default_driver_registry
-from .domain import AgentSettings, Backend, Complexity, Driver
+from .domain import AgentSettings, Backend, Complexity, Driver, DriverMode, ExecutionLocation
 from .services import ChatService, Conversation
 from .session_inventory import SessionInventory, SessionLifecycle
 from .state import AppState, load_app_state, save_app_state
@@ -108,11 +108,11 @@ def run_tui(
                 with Container(id="sidebar"):
                     yield Label("Yikes")
                     yield Static("", id="backend-status")
+                    yield Static("", id="location-status")
                     yield Static("", id="driver-status")
                     yield Static("", id="model-status")
                     yield Static("", id="complexity-status")
                     yield Static("", id="web-status")
-                    yield Static("", id="tmux-status")
                     yield Static(f"CWD: {self.conversation.options.cwd}")
                     yield Select(
                         [(b.value, b.value) for b in Backend],
@@ -120,8 +120,13 @@ def run_tui(
                         id="backend",
                     )
                     yield Select(
+                        self._location_select_options(),
+                        value=self.conversation.options.location.value,
+                        id="location",
+                    )
+                    yield Select(
                         self._driver_select_options(),
-                        value=self.conversation.options.driver.value,
+                        value=self.conversation.options.mode.value,
                         id="driver",
                     )
                     yield Select(
@@ -138,11 +143,6 @@ def run_tui(
                         [("web on", "on"), ("web off", "off")],
                         value="on" if self.conversation.options.settings.web_search_enabled else "off",
                         id="web",
-                    )
-                    yield Select(
-                        [("tmux on", "on"), ("tmux off", "off")],
-                        value="on" if self.conversation.options.settings.tmux_enabled else "off",
-                        id="tmux",
                     )
                     yield Button("Refresh Sessions", id="refresh-sessions")
                     yield Select([("no sessions", "")], value="", id="session-select")
@@ -167,7 +167,7 @@ def run_tui(
             log = self.query_one("#log", RichLog)
             log.write("[bold green]Ready.[/bold green] Type a message and press Enter.")
             log.write(
-                "[dim]Use the left controls or /backend and /driver to switch backend and mode. "
+                "[dim]Use the left controls or /backend, /location, and /driver to switch backend, where it runs, and how it runs. "
                 "/models shows valid model options.[/dim]"
             )
             self._refresh_controls()
@@ -233,15 +233,37 @@ def run_tui(
                 return
             if event.select.id == "driver":
                 value = str(event.value)
-                if value not in {item.value for item in Driver}:
+                if value not in {item.value for item in DriverMode}:
                     return
-                selected = Driver(value)
-                if selected is self.conversation.options.driver:
+                selected = DriverMode(value)
+                if selected is self.conversation.options.mode:
                     return
-                self.conversation.set_driver(selected)
+                try:
+                    self.conversation.set_driver_mode(selected)
+                except ValueError as exc:
+                    self._refresh_controls()
+                    log.write(f"[bold yellow]Yikes:[/bold yellow] {exc}")
+                    return
                 self._refresh_controls()
                 self._save_state()
                 log.write(f"[bold green]Yikes:[/bold green] Driver set to {selected.value}.")
+                return
+            if event.select.id == "location":
+                value = str(event.value)
+                if value not in {item.value for item in ExecutionLocation}:
+                    return
+                selected = ExecutionLocation(value)
+                if selected is self.conversation.options.location:
+                    return
+                try:
+                    self.conversation.set_execution_location(selected)
+                except ValueError as exc:
+                    self._refresh_controls()
+                    log.write(f"[bold yellow]Yikes:[/bold yellow] {exc}")
+                    return
+                self._refresh_controls()
+                self._save_state()
+                log.write(f"[bold green]Yikes:[/bold green] Location set to {selected.value}.")
                 return
             if event.select.id == "web":
                 value = str(event.value)
@@ -255,19 +277,6 @@ def run_tui(
                 self._save_state()
                 state = "enabled" if enabled else "disabled"
                 log.write(f"[bold green]Yikes:[/bold green] Web search {state}.")
-                return
-            if event.select.id == "tmux":
-                value = str(event.value)
-                if value not in {"on", "off"}:
-                    return
-                enabled = value == "on"
-                if enabled is self.conversation.options.settings.tmux_enabled:
-                    return
-                self.conversation.set_tmux_enabled(enabled)
-                self._refresh_controls()
-                self._save_state()
-                state = "enabled" if enabled else "disabled"
-                log.write(f"[bold green]Yikes:[/bold green] tmux UI transport {state}.")
                 return
             if event.select.id == "complexity":
                 value = str(event.value)
@@ -319,25 +328,27 @@ def run_tui(
         def _refresh_controls(self) -> None:
             options = self.conversation.options
             self.query_one("#backend-status", Static).update(f"Backend: {options.backend.value}")
-            self.query_one("#driver-status", Static).update(f"Mode: {options.driver.value}")
+            self.query_one("#location-status", Static).update(f"Location: {options.location.value}")
+            self.query_one("#driver-status", Static).update(f"Driver: {options.mode.value}")
             self.query_one("#model-status", Static).update(f"Model: {options.model or 'default'}")
             self.query_one("#complexity-status", Static).update(f"Complexity: {options.complexity.value}")
             web_state = "on" if options.settings.web_search_enabled else "off"
-            tmux_state = "on" if options.settings.tmux_enabled else "off"
             self.query_one("#web-status", Static).update(f"Web: {web_state}")
-            self.query_one("#tmux-status", Static).update(f"tmux: {tmux_state}")
             backend_select = self.query_one("#backend", Select)
+            location_select = self.query_one("#location", Select)
             driver_select = self.query_one("#driver", Select)
             model_select = self.query_one("#model", Select)
             complexity_select = self.query_one("#complexity", Select)
             web_select = self.query_one("#web", Select)
-            tmux_select = self.query_one("#tmux", Select)
             model_value = options.model or "default"
             if backend_select.value != options.backend.value:
                 backend_select.value = options.backend.value
+            location_select.set_options(self._location_select_options())
+            if location_select.value != options.location.value:
+                location_select.value = options.location.value
             driver_select.set_options(self._driver_select_options())
-            if driver_select.value != options.driver.value:
-                driver_select.value = options.driver.value
+            if driver_select.value != options.mode.value:
+                driver_select.value = options.mode.value
             model_select.set_options(self._model_select_options())
             if model_select.value != model_value:
                 model_select.value = model_value
@@ -345,13 +356,15 @@ def run_tui(
                 complexity_select.value = options.complexity.value
             if web_select.value != web_state:
                 web_select.value = web_state
-            if tmux_select.value != tmux_state:
-                tmux_select.value = tmux_state
 
         def _driver_select_options(self) -> list[tuple[str, str]]:
+            return [(mode.value, mode.value) for mode in DriverMode]
+
+        def _location_select_options(self) -> list[tuple[str, str]]:
             return [
-                (option.driver.value, option.driver.value)
-                for option in self.conversation.driver_registry.options(self.conversation.options.backend)
+                ("host", ExecutionLocation.HOST.value),
+                ("docker", ExecutionLocation.DOCKER.value),
+                ("remote (future)", ExecutionLocation.REMOTE.value),
             ]
 
         def _model_select_options(self) -> list[tuple[str, str]]:

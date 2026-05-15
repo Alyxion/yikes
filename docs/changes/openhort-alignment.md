@@ -30,6 +30,7 @@ This document records how Yikes changed after reviewing OpenHort's current conce
 24. Added overtake support for Docker+tmux sessions: `yikes attach <sandbox-id>` returns `docker exec -it <container> tmux -S /workspace/yikes-tmux.sock attach -t <session>`.
 25. Added generated workspaces for tmux-backed sessions without explicit `cwd`: local tmux gets a random host temp dir, Docker+tmux gets `/workspace/session-<id>` in the container volume.
 26. Added startup handling for generated workspaces: Claude/Codex trust prompts are auto-confirmed only for generated workspaces, and Codex update prompts are suppressed with a per-session home/version file rather than updating or mutating the user's real Codex home.
+27. Split the user-facing runtime controls into location (`host`, `docker`, future `remote`) and driver (`cli`, `tmux`, future `api`). The older internal `Driver` enum still maps these combinations onto the current implementation.
 
 ## How It Changed
 

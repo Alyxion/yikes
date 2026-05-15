@@ -1,0 +1,131 @@
+:root {
+  --yikes-mermaid-node-bg: #f7f9ff;
+  --yikes-mermaid-node-border: #6874a8;
+  --yikes-mermaid-node-text: #15171a;
+  --yikes-mermaid-edge: #727984;
+  --yikes-mermaid-label-bg: #ffffff;
+}
+
+[data-md-color-scheme="slate"] {
+  --yikes-mermaid-node-bg: #eef4ff;
+  --yikes-mermaid-node-border: #91a4d8;
+  --yikes-mermaid-node-text: #111827;
+  --yikes-mermaid-edge: #b8c2cf;
+  --yikes-mermaid-label-bg: #1b1f27;
+}
+
+.mermaid .node rect,
+.mermaid .node polygon,
+.mermaid .node path,
+.mermaid .node circle,
+.mermaid .node ellipse {
+  fill: var(--yikes-mermaid-node-bg) !important;
+  stroke: var(--yikes-mermaid-node-border) !important;
+}
+
+.mermaid .nodeLabel,
+.mermaid .nodeLabel p,
+.mermaid .flowchart-label,
+.mermaid .flowchart-label p,
+.mermaid .label,
+.mermaid .label text,
+.mermaid svg text,
+.mermaid svg tspan {
+  fill: var(--yikes-mermaid-node-text) !important;
+  color: var(--yikes-mermaid-node-text) !important;
+}
+
+.mermaid .edgePath .path,
+.mermaid .flowchart-link {
+  stroke: var(--yikes-mermaid-edge) !important;
+}
+
+.mermaid marker path {
+  fill: var(--yikes-mermaid-edge) !important;
+  stroke: var(--yikes-mermaid-edge) !important;
+}
+
+.mermaid .edgeLabel,
+.mermaid .edgeLabel p {
+  background-color: var(--yikes-mermaid-label-bg) !important;
+  color: var(--md-default-fg-color) !important;
+}
+
+.mermaid .edgeLabel text,
+.mermaid .edgeLabel tspan,
+.mermaid .cluster-label text,
+.mermaid .cluster-label tspan {
+  fill: var(--md-default-fg-color) !important;
+  color: var(--md-default-fg-color) !important;
+}
+
+.mermaid,
+.mermaid svg {
+  cursor: zoom-in;
+}
+
+.mermaid:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 0.25rem;
+}
+
+.yikes-mermaid-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: none;
+  background: color-mix(in srgb, var(--md-default-bg-color) 88%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.yikes-mermaid-lightbox[aria-hidden="false"] {
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.yikes-mermaid-lightbox__toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
+}
+
+.yikes-mermaid-lightbox__button {
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  border: 1px solid var(--md-default-fg-color--lighter);
+  border-radius: 0.25rem;
+  color: var(--md-default-fg-color);
+  background: var(--md-code-bg-color);
+  font: inherit;
+  cursor: pointer;
+}
+
+.yikes-mermaid-lightbox__button:hover {
+  background: var(--md-accent-fg-color--transparent);
+}
+
+.yikes-mermaid-lightbox__canvas {
+  overflow: auto;
+  padding: 1.5rem;
+}
+
+.yikes-mermaid-lightbox__content {
+  width: max-content;
+  min-width: 100%;
+  transform-origin: top left;
+}
+
+.yikes-mermaid-lightbox__content svg {
+  display: block;
+  max-width: none !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: min(96vw, 1400px);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: var(--md-default-bg-color);
+}

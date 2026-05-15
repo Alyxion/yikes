@@ -147,15 +147,22 @@ def test_slash_commands_are_handled_locally() -> None:
     assert conversation.handle_slash_command("/backend") == "Backend: claude"
     assert conversation.handle_slash_command("/driver tmux") == "Driver set to tmux."
     assert conversation.options.driver is Driver.TMUX
-    assert "not available" in conversation.handle_slash_command("/mode remote-control")
+    assert "not supported yet" in conversation.handle_slash_command("/mode remote")
     assert conversation.options.driver is Driver.TMUX
+    assert conversation.handle_slash_command("/location docker") == "Location set to docker."
+    assert conversation.options.driver is Driver.DOCKER
+    assert conversation.options.settings.tmux_enabled is True
+    assert conversation.handle_slash_command("/driver cli") == "Driver set to cli."
+    assert conversation.options.driver is Driver.DOCKER
+    assert conversation.options.settings.tmux_enabled is False
     assert conversation.handle_slash_command("/complexity high") == "Complexity set to high."
     assert conversation.options.complexity is Complexity.HIGH
     assert conversation.handle_slash_command("/backend codex") == "Backend set to codex. Model reset to default."
     assert conversation.options.backend is Backend.CODEX
     assert conversation.options.model is None
     status = conversation.handle_slash_command("/status")
-    assert "driver: tmux" in status
+    assert "location: docker" in status
+    assert "driver: cli" in status
     assert "complexity: high" in status
     assert "web: enabled" in status
     restart_result = conversation.run_slash_command("/restart")
@@ -183,13 +190,13 @@ def test_slash_command_suggestions_come_from_registry() -> None:
 
     driver_suggestions = conversation.slash_suggestions("/driver")
     assert {suggestion.completion for suggestion in driver_suggestions} == {
-        "/driver direct",
+        "/driver cli",
         "/driver tmux",
-        "/driver docker",
+        "/driver api",
     }
 
-    mode_suggestions = conversation.slash_suggestions("/mode t")
-    assert [suggestion.completion for suggestion in mode_suggestions] == ["/mode tmux"]
+    mode_suggestions = conversation.slash_suggestions("/mode d")
+    assert [suggestion.completion for suggestion in mode_suggestions] == ["/location docker"]
 
     backend_suggestions = conversation.slash_suggestions("/backend c")
     assert {suggestion.completion for suggestion in backend_suggestions} == {"/backend claude", "/backend codex"}

@@ -1,15 +1,14 @@
-# yikes
+# Yikes
 
-A unified runtime for **Claude Code** and **Codex CLI** — runs them directly, inside tmux, and later through a Yikes-owned remote server, exposes them as a Python library and a thin CLI wrapper, and turns their streaming output into a clean event stream.
+Yikes is a runtime layer for **Claude Code** and **Codex CLI**. It gives Python apps, web backends, and terminal users one consistent way to start sessions, choose where they run, choose how they are driven, attach MCPs, manage credentials, and overtake long-running interactive work.
 
-!!! note "Implementation status"
-    The repository now contains the first runnable Python package and Textual terminal app. Some pages still describe the target architecture for the larger session manager; sections marked as roadmap or future design should be read as planned behaviour, not as what the current chatbot slice already implements.
+The key idea is simple: choose **where** the agent runs (`host`, `docker`, remote machines in the future) separately from **how** Yikes drives it (`cli`, `tmux`, API in the future). That keeps fast headless calls, real interactive tmux sessions, Docker isolation, and future remote servers composable instead of forcing them into one overloaded mode switch.
 
 ---
 
-## What we're building
+## What Yikes Does
 
-Multiple faces over one durable session manager:
+Yikes is designed as one runtime with multiple faces:
 
 ```mermaid
 flowchart LR
@@ -33,31 +32,69 @@ flowchart LR
     class ai_tmux,ai_direct,ai_remote agent
 ```
 
-1. **CLI app** — the current implementation provides `yikes` / `yikes tui` for the Textual chatbot, `yikes chat-smoke` for integration smoke tests, `yikes sessions` for runtime inventory, and `yikes server` for remote attach.
-2. **Python library** — `ChatService.create_session(...)` today, later a durable async `Manager`/`Session` surface.
-3. **Web/OpenHort clients** — attach to the same session manager instead of owning Claude/Codex processes.
-4. **Shared engine** — owns streaming, line-revision tracking, transcript persistence, policy, and runtime lifecycle.
+1. **Terminal app** — `yikes` opens a full-screen control surface by default.
+2. **Python library** — Python code can create sessions, send prompts, inspect status, and use the same command registry as the UI.
+3. **Web backend surface** — web apps can embed Yikes behind an iframe-plus-chat workflow without owning Claude/Codex process control.
+4. **Shared runtime** — the same service layer owns backend selection, location/driver mapping, policy, credentials, MCP routing, sessions, and attach commands.
 
-The active six chatbot test slots are `claude/direct`, `claude/tmux`, `claude/docker`, `codex/direct`, `codex/tmux`, and `codex/docker`. For Docker sessions, tmux is an additional transport flag rather than a mutually exclusive runtime: `driver=docker` plus `tmux_enabled=True` starts the real interactive CLI inside tmux in the container. Remote access is handled by a Yikes-owned `remote-server` control plane rather than Claude Remote Control. The code still has a `remote-control` compatibility enum for Codex's experimental websocket path, but it is not registered as an interactive chat driver.
+The UI now separates **where** a session runs from **how** Yikes drives it:
+
+- Location: `host`, `docker`, or planned `remote`.
+- Driver: `cli`, `tmux`, or planned `api`.
+
+The active implementation maps those controls onto the current runtime slots: host+cli, host+tmux, docker+cli, and docker+tmux. Remote access is handled by a Yikes-owned server/control plane rather than Claude Remote Control.
+
+```mermaid
+flowchart TB
+    user[User / Python / Web] --> backend{Backend}
+    backend --> claude[Claude Code]
+    backend --> codex[Codex CLI]
+
+    claude --> location{Location}
+    codex --> location
+
+    location -->|host| host[Host machine]
+    location -->|docker| docker[Docker sandbox]
+    location -->|remote| remote[Remote machine / Yikes server<br/>future]
+
+    host --> host_driver{Driver}
+    docker --> docker_driver{Driver}
+    remote --> remote_driver{Driver}
+
+    host_driver -->|cli| host_cli[Headless CLI/protocol path]
+    host_driver -->|tmux| host_tmux[Interactive TUI in host tmux]
+    host_driver -->|api| host_api[Structured API<br/>future]
+
+    docker_driver -->|cli| docker_cli[Headless CLI/protocol inside container]
+    docker_driver -->|tmux| docker_tmux[Interactive TUI in tmux inside container]
+    docker_driver -->|api| docker_api[Structured API inside container<br/>future]
+
+    remote_driver -->|api| remote_api[Yikes remote API<br/>future]
+
+    host_tmux -. forbidden .- bad1["claude -p / codex exec"]
+    docker_tmux -. forbidden .- bad2["claude -p / codex exec"]
+```
 
 ---
 
-## Why these runtimes?
+## Why These Choices?
 
-| Driver | When it wins |
+| Choice | When it wins |
 |---|---|
-| **`direct`** (fast path) | Headless, structured output. `claude -p --output-format stream-json` gives clean token deltas; `codex app-server` gives JSON-RPC with delta events. Lower latency, no screen-scraping, but no access to TUI-only features. |
-| **`tmux`** (TUI transport) | Anything that must drive the local interactive TUI by keystroke: slash commands, prompts, full-screen flows, manual attach, and recovery when native protocols do not expose a feature. This starts `claude` or `codex` interactively; it never uses `claude -p` or `codex exec`. |
-| **`docker`** (isolated runtime) | Runs Claude/Codex inside a managed Docker sandbox with persistent container metadata, host MCP proxying through `host.docker.internal`, and explicit credential/env injection. Can also run tmux inside the container for overtake/attach. |
-| **`remote-server`** (future remote attach) | A Yikes server owns the backend process and exposes session control over authenticated HTTP/WebSocket. This is the OpenHort integration path. |
+| **Location `host`** | Run on the current machine. |
+| **Location `docker`** | Run inside a managed Docker sandbox with persistent container metadata, host MCP proxying through `host.docker.internal`, and explicit credential/env injection. |
+| **Location `remote`** | Future remote machine/server runtime. |
+| **Driver `cli`** | Current fast path through local CLI/protocol commands. Lower latency, no screen-scraping, but no access to TUI-only features. |
+| **Driver `tmux`** | Drive the real interactive TUI by keystroke: slash commands, prompts, full-screen flows, manual attach, and recovery when native protocols do not expose a feature. This starts `claude` or `codex` interactively; it never uses `claude -p` or `codex exec`. Works on host and inside Docker. |
+| **Driver `api`** | Future structured API/app-server mode. |
 
-The library and CLI accept a driver/runtime flag. Sensible defaults:
+The library and CLI accept these as one conceptual pair. Sensible defaults:
 
-- `direct` for one-shot `-p`-style invocations where we just want clean output.
-- `tmux` if the request needs a local interactive TUI or human attach.
-- `docker` when isolation, persistent sandbox state, or host-MCP bridging into a container is required.
-- `docker` plus `--tmux` when isolation and real TUI overtake are both required.
-- `remote-server` only when connecting to a configured Yikes server.
+- `host + cli` for one-shot invocations where we just want clean output.
+- `host + tmux` if the request needs the local interactive TUI or human attach.
+- `docker + cli` when isolation, persistent sandbox state, or host-MCP bridging into a container is required.
+- `docker + tmux` when isolation and real TUI overtake are both required.
+- `remote + api` for configured Yikes servers or remote machines once that transport is active.
 - Explicit override always wins.
 
 ---
@@ -75,7 +112,7 @@ The library and CLI accept a driver/runtime flag. Sensible defaults:
 
 - Multi-user hosted SaaS. A local/server session manager is in scope; shared public hosting is not.
 - Re-implementing either CLI's prompt parsing.
-- Hosting an MCP server ourselves (we *consume* both CLIs; we may expose one later).
+- Hosting an MCP server ourselves (we *consume* both CLIs; exposing a Yikes MCP surface is separate work).
 - Replacing the native Claude/Codex TUIs. The current Textual app is a yikes control surface over the shared service layer, not a reimplementation of either backend UI.
 
 ---
@@ -102,7 +139,8 @@ If no `cwd` is passed for a tmux-backed session, Yikes allocates a random worksp
 | Term | Meaning |
 |---|---|
 | **Backend** | One of `claude` or `codex`. The agent CLI we drive. |
-| **Runtime / Driver** | How we talk to that backend. Current: `direct`, `tmux`, `docker`; future/remote: `remote-server`. tmux is also a transport flag for Docker sessions. |
+| **Location** | Where the backend runs: `host`, `docker`, or future `remote`. |
+| **Driver** | How Yikes drives that backend: `cli`, `tmux`, or future `api`. |
 | **Session** | A single conversation with a backend. Has a stable ID, a transcript, an event stream. |
 | **Pane** | The tmux pane that hosts a session when the driver is `tmux`. |
 | **Event** | A typed message we surface to the caller (`StreamDelta`, `LineRevised`, `ToolUse`, `ApprovalRequest`, `TurnComplete`, …). |
@@ -119,3 +157,5 @@ If no `cwd` is passed for a tmux-backed session, Yikes allocates a random worksp
 - [Embedding](embedding.md) covers Python/web embedding, including iframe-plus-chat editor use cases.
 - [OpenHort Parity](openhort-parity.md) tracks what Yikes must own before OpenHort removes duplicated functionality.
 - [Roadmap](roadmap.md) has the phased plan and the open questions we need to resolve before writing code.
+
+Mermaid diagrams are interactive. Click any diagram, or focus it and press `Enter`, to open a larger view with zoom controls.

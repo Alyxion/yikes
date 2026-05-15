@@ -19,6 +19,18 @@ class Driver(StrEnum):
     REMOTE_CONTROL = "remote-control"
 
 
+class ExecutionLocation(StrEnum):
+    HOST = "host"
+    DOCKER = "docker"
+    REMOTE = "remote"
+
+
+class DriverMode(StrEnum):
+    CLI = "cli"
+    TMUX = "tmux"
+    API = "api"
+
+
 class Complexity(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
@@ -117,6 +129,22 @@ class ChatOptions:
 
     def with_settings(self, settings: AgentSettings) -> "ChatOptions":
         return replace(self, settings=settings)
+
+    @property
+    def location(self) -> ExecutionLocation:
+        if self.driver is Driver.DOCKER:
+            return ExecutionLocation.DOCKER
+        if self.driver is Driver.REMOTE_CONTROL:
+            return ExecutionLocation.REMOTE
+        return ExecutionLocation.HOST
+
+    @property
+    def mode(self) -> DriverMode:
+        if self.driver is Driver.TMUX or (self.driver is Driver.DOCKER and self.settings.tmux_enabled):
+            return DriverMode.TMUX
+        if self.driver is Driver.REMOTE_CONTROL:
+            return DriverMode.API
+        return DriverMode.CLI
 
 
 def _normalize_path(path: Path) -> Path:

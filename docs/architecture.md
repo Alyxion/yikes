@@ -315,7 +315,7 @@ Slash commands are a shared capability, not a terminal-only feature. The canonic
 - suggestions: prefix completion for commands and argument completion for command-specific values
 - preview hints: commands such as `/models` can show contextual options before Enter is pressed
 
-Model names and other contextual arguments come from provider registries. The UI must not hardcode `/model`, `/models`, `/backend`, `/driver`, `/web`, `/dirs`, or `/mcp` choices; it asks registries for valid options for the active backend and driver. As backend adapters mature, those providers should prefer live capability discovery or backend-reported metadata, with static defaults used only as a fallback.
+Model names and other contextual arguments come from provider registries. The UI must not hardcode `/model`, `/models`, `/backend`, `/location`, `/driver`, `/web`, `/dirs`, or `/mcp` choices; it asks registries for valid options for the active backend, location, and driver. As backend adapters mature, those providers should prefer live capability discovery or backend-reported metadata, with static defaults used only as a fallback.
 
 The intended behavior is broader than model selection: every slash command that accepts constrained arguments should register its own suggestion provider. This lets the Textual app autocomplete commands today and lets a web backend later return the same suggestions over HTTP or websocket.
 

@@ -2,7 +2,7 @@
 
 The CLI is a thin shell over the Python library. It must hit two notes:
 
-1. **From a user's perspective**, the main choices are **provider** (Claude or Codex), runtime/mode, and whether a TUI transport is needed. For the interactive chatbot, mode is `direct`, `tmux`, or `docker`; Docker can also enable tmux inside the container; remote work uses a Yikes-owned `remote-server` session.
+1. **From a user's perspective**, the main choices are **provider** (Claude or Codex), **location** (`host`, `docker`, future `remote`), and **driver** (`cli`, `tmux`, future `api`). Location says where it runs. Driver says how Yikes drives it.
 2. **For session management** (spawn, kill, list, killall, attach), the command surface is uniform across both backends — same flags, same output, same exit codes.
 
 Native `claude` / `codex` flags are still accepted (we proxy them through), but you rarely need to set them.
@@ -18,12 +18,12 @@ Global options:
 | Flag | Description | Default |
 |---|---|---|
 | `-b`, `--backend {claude,codex}` | Which CLI to drive. | `claude` |
-| `-d`, `--driver {direct,tmux,docker,remote-server,auto}` | How to drive it. Interactive chat accepts `direct`/`tmux`/`docker`; `remote-server` is for authenticated remote Yikes sessions. | `auto` |
+| `--location {host,docker,remote}` | Where the backend runs. `remote` is reserved for future remote-machine/server sessions. | `host` |
+| `-d`, `--driver {cli,tmux,api}` | How to drive it. `api` is reserved for future structured API/app-server mode. | `cli` |
 | `-s`, `--session NAME_OR_ID` | Operate on a specific session. | (new) |
 | `--socket PATH_OR_NAME` | tmux socket path/name, only for `tmux`. | `~/.yikes/tmux/default.sock` |
 | `--remote ADDR_OR_NAME` | Remote Yikes server endpoint/name, only for `remote-server`. | configured server |
 | `--cwd PATH` | Working dir for spawned sessions. If omitted for tmux-backed sessions, Yikes creates a random workspace where the session starts. | generated for tmux, `$PWD` otherwise |
-| `--tmux / --no-tmux` | For Docker mode, start the backend in tmux inside the container so it can be overtaken later. | off |
 | `--web-search / --no-web-search` | Enable or disable web search for the agent config. | enabled |
 | `--read-dir PATH` | Add a directory the agent may read. Repeatable. | none |
 | `--write-dir PATH` | Add a directory the agent may write. Repeatable. | none |
@@ -36,7 +36,7 @@ Global options:
 
 ```mermaid
 flowchart LR
-    subgraph one[User-facing: provider + mode]
+    subgraph one[User-facing: provider + location + driver]
         prompt[yikes run]
         interactive[yikes shell]
         remote[yikes remote]
@@ -66,15 +66,15 @@ flowchart LR
 The current package implements:
 
 - `yikes` / `yikes tui`: a Textual chatbot control surface, default when no arguments are passed.
-- `yikes chat-smoke`: an end-to-end chatbot smoke flow across backend/driver combinations.
+- `yikes chat-smoke`: an end-to-end chatbot smoke flow across backend/runtime combinations.
 - `yikes sessions`: lists known Yikes sessions across durable tmux/remote metadata and Docker sandboxes.
 - `yikes close <id>`: closes one known session. Docker sessions are destroyed; tmux sessions are killed when socket metadata is available; durable metadata is removed.
 - `yikes close-all --runtime docker|tmux|remote-server|all --backend claude|codex|all`: closes matching sessions in bulk.
 - `yikes attach <id> [--print-only]`: overtakes attachable local tmux and Docker+tmux sessions. Docker attach uses `docker exec -it <container> tmux ...`.
 - `yikes token` / `yikes server`: creates hashed bearer tokens and starts the Yikes WebSocket control plane.
-- Shared slash-command registry with autocomplete for `/model`, `/models`, `/backend`, `/driver`, `/mode`, `/sessions`, `/switch`, `/close`, `/close-all`, `/complexity`, `/web`, `/dirs`, `/mcp`, `/restart`, and `/exit`.
-- Persisted app state in `~/.config/yikes/state.json` covering backend, chat mode, model, complexity, web search, read/write directories, and MCP servers.
-- The Textual UI exposes backend, mode, tmux on/off, model, complexity, web-search, session inventory, switch, attach, close, close Docker, close tmux, and close all controls in the left panel.
+- Shared slash-command registry with autocomplete for `/model`, `/models`, `/backend`, `/location`, `/mode`, `/driver`, `/sessions`, `/switch`, `/close`, `/close-all`, `/complexity`, `/web`, `/dirs`, `/mcp`, `/restart`, and `/exit`.
+- Persisted app state in `~/.config/yikes/state.json` covering backend, effective runtime, model, complexity, web search, read/write directories, and MCP servers.
+- The Textual UI exposes backend, location, driver, model, complexity, web-search, session inventory, switch, attach, close, close Docker, close tmux, and close all controls in the left panel.
 
 The command set below is still the larger target CLI design.
 

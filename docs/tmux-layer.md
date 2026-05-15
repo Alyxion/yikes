@@ -6,6 +6,25 @@ tmux is a transport, not a replacement for the runtime. A local `driver=tmux` se
 
 The tmux transport must never use headless commands. In tmux, Claude starts as `claude ...`; Codex starts as `codex --no-alt-screen ...`. `claude -p`, `codex exec`, and other one-shot paths belong only to the `direct` runtime.
 
+```mermaid
+flowchart LR
+    subgraph host[Location: host]
+        hcli["Driver: cli<br/>headless direct path"]
+        htmux["Driver: tmux<br/>real interactive TUI<br/>inside host tmux"]
+    end
+
+    subgraph docker[Location: docker]
+        dcli["Driver: cli<br/>headless direct path<br/>inside container"]
+        dtmux["Driver: tmux<br/>real interactive TUI<br/>inside container tmux"]
+    end
+
+    htmux --> hatt["yikes attach<br/>tmux attach"]
+    dtmux --> datt["yikes attach<br/>docker exec -it ... tmux attach"]
+
+    bad["claude -p / codex exec"] -. "forbidden for tmux" .- htmux
+    bad -. "forbidden for tmux" .- dtmux
+```
+
 ## Design principles
 
 1. **Dedicated socket.** We never use the user's default tmux server. A separate `-L yikes` (or `-S /path`) socket keeps our sessions out of the user's `tmux ls`, and a `-f /dev/null` config ignores their `~/.tmux.conf`.

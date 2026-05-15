@@ -6,7 +6,7 @@ import shlex
 from typing import Callable, Iterable, TYPE_CHECKING
 
 from .capabilities import DriverRegistry
-from .domain import Backend, Complexity, Driver, McpServer
+from .domain import Backend, Complexity, DriverMode, ExecutionLocation, McpServer
 from .session_inventory import SessionInventory, SessionLifecycle
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -297,22 +297,35 @@ def default_command_registry() -> CommandRegistry:
         context.conversation.set_backend(backend)
         return CommandResult(f"Backend set to {backend.value}. Model reset to default.")
 
-    def driver_command(context: CommandContext, arg: str) -> CommandResult:
+    def location_command(context: CommandContext, arg: str) -> CommandResult:
         if not arg:
-            return CommandResult(f"Driver: {context.conversation.options.driver.value}")
+            return CommandResult(f"Location: {context.conversation.options.location.value}")
         normalized = arg.lower()
         try:
-            driver = Driver(normalized)
+            location = ExecutionLocation(normalized)
         except ValueError:
-            valid = ", ".join(option.driver.value for option in context.driver_registry.options(context.conversation.options.backend))
+            valid = ", ".join(location.value for location in ExecutionLocation)
+            return CommandResult(f"Unknown location: {arg}. Valid locations: {valid}.")
+        try:
+            context.conversation.set_execution_location(location)
+        except ValueError as exc:
+            return CommandResult(str(exc))
+        return CommandResult(f"Location set to {location.value}.")
+
+    def driver_command(context: CommandContext, arg: str) -> CommandResult:
+        if not arg:
+            return CommandResult(f"Driver: {context.conversation.options.mode.value}")
+        normalized = arg.lower()
+        try:
+            mode = DriverMode(normalized)
+        except ValueError:
+            valid = ", ".join(mode.value for mode in DriverMode)
             return CommandResult(f"Unknown driver: {arg}. Valid drivers: {valid}.")
-        backend = context.conversation.options.backend
-        if not context.driver_registry.is_available(backend, driver):
-            reason = context.driver_registry.unavailable_reason(backend, driver)
-            valid = ", ".join(option.driver.value for option in context.driver_registry.options(backend))
-            return CommandResult(f"Driver {driver.value} is not available for {backend.value}: {reason} Valid drivers: {valid}.")
-        context.conversation.set_driver(driver)
-        return CommandResult(f"Driver set to {driver.value}.")
+        try:
+            context.conversation.set_driver_mode(mode)
+        except ValueError as exc:
+            return CommandResult(str(exc))
+        return CommandResult(f"Driver set to {mode.value}.")
 
     def complexity_command(context: CommandContext, arg: str) -> CommandResult:
         if not arg:
@@ -347,15 +360,23 @@ def default_command_registry() -> CommandRegistry:
     def tmux_command(context: CommandContext, arg: str) -> CommandResult:
         normalized = arg.lower()
         if not normalized:
-            state = "enabled" if context.conversation.options.settings.tmux_enabled else "disabled"
-            return CommandResult(f"tmux UI transport: {state}.")
+            return CommandResult(
+                "tmux is now selected with /driver tmux. "
+                f"Current driver: {context.conversation.options.mode.value}."
+            )
         if normalized in {"on", "enable", "enabled", "true", "yes"}:
-            context.conversation.set_tmux_enabled(True)
-            return CommandResult("tmux UI transport enabled.")
+            try:
+                context.conversation.set_driver_mode(DriverMode.TMUX)
+            except ValueError as exc:
+                return CommandResult(str(exc))
+            return CommandResult("Driver set to tmux.")
         if normalized in {"off", "disable", "disabled", "false", "no"}:
-            context.conversation.set_tmux_enabled(False)
-            return CommandResult("tmux UI transport disabled.")
-        return CommandResult("Usage: /tmux [on|off]")
+            try:
+                context.conversation.set_driver_mode(DriverMode.CLI)
+            except ValueError as exc:
+                return CommandResult(str(exc))
+            return CommandResult("Driver set to cli.")
+        return CommandResult("Usage: /tmux [on|off] or /driver [cli|tmux|api]")
 
     def dirs_command(context: CommandContext, arg: str) -> CommandResult:
         parts = _split_args(arg)
@@ -421,27 +442,38 @@ def default_command_registry() -> CommandRegistry:
             if not normalized or backend.value.startswith(normalized)
         ]
 
-    def driver_suggestions(context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+    def location_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
         normalized = prefix.lower()
+        descriptions = {
+            ExecutionLocation.HOST: "Run on this host",
+            ExecutionLocation.DOCKER: "Run in a Docker sandbox",
+            ExecutionLocation.REMOTE: "Future remote machine/server runtime",
+        }
         return [
             CommandSuggestion(
-                value=option.driver.value,
-                description=option.description,
-                completion=f"/driver {option.driver.value}",
+                value=location.value,
+                description=descriptions[location],
+                completion=f"/location {location.value}",
             )
-            for option in context.driver_registry.options(context.conversation.options.backend)
-            if not normalized or option.driver.value.startswith(normalized)
+            for location in ExecutionLocation
+            if not normalized or location.value.startswith(normalized)
         ]
 
-    def mode_suggestions(context: CommandContext, prefix: str) -> list[CommandSuggestion]:
-        suggestions = driver_suggestions(context, prefix)
+    def driver_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+        normalized = prefix.lower()
+        descriptions = {
+            DriverMode.CLI: "Drive the backend through the CLI/protocol fast path",
+            DriverMode.TMUX: "Drive a real interactive TUI through tmux",
+            DriverMode.API: "Future structured API/app-server mode",
+        }
         return [
             CommandSuggestion(
-                value=suggestion.value,
-                description=suggestion.description,
-                completion=suggestion.completion.replace("/driver ", "/mode ", 1) if suggestion.completion else None,
+                value=mode.value,
+                description=descriptions[mode],
+                completion=f"/driver {mode.value}",
             )
-            for suggestion in suggestions
+            for mode in DriverMode
+            if not normalized or mode.value.startswith(normalized)
         ]
 
     def complexity_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
@@ -554,7 +586,7 @@ def default_command_registry() -> CommandRegistry:
             preview_suggestions=model_suggestions,
         )
     )
-    registry.register(CommandSpec("status", "Show backend, driver, model, cwd, and message count", status_command))
+    registry.register(CommandSpec("status", "Show backend, location, driver, model, cwd, and message count", status_command))
     registry.register(CommandSpec("sessions", "List known Yikes tmux, Docker, and remote sessions", sessions_command, aliases=("ps",)))
     registry.register(
         CommandSpec(
@@ -604,19 +636,29 @@ def default_command_registry() -> CommandRegistry:
     registry.register(
         CommandSpec(
             "driver",
-            "Set or show the active usage mode",
+            "Set or show how the backend is driven",
             driver_command,
-            usage="[direct|tmux]",
+            usage="[cli|tmux|api]",
             argument_suggestions=driver_suggestions,
         )
     )
     registry.register(
         CommandSpec(
+            "location",
+            "Set or show where the backend runs",
+            location_command,
+            usage="[host|docker|remote]",
+            aliases=("where", "runtime"),
+            argument_suggestions=location_suggestions,
+        )
+    )
+    registry.register(
+        CommandSpec(
             "mode",
-            "Alias for /driver",
-            driver_command,
-            usage="[direct|tmux]",
-            argument_suggestions=mode_suggestions,
+            "Alias for /location",
+            location_command,
+            usage="[host|docker|remote]",
+            argument_suggestions=location_suggestions,
         )
     )
     registry.register(

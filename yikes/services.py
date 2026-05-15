@@ -15,7 +15,19 @@ from .commands import (
     default_command_registry,
     default_model_registry,
 )
-from .domain import AgentSettings, Backend, ChatOptions, ChatResult, Complexity, Driver, McpServer, Message, MessageRole
+from .domain import (
+    AgentSettings,
+    Backend,
+    ChatOptions,
+    ChatResult,
+    Complexity,
+    Driver,
+    DriverMode,
+    ExecutionLocation,
+    McpServer,
+    Message,
+    MessageRole,
+)
 from .drivers import ask_backend
 
 
@@ -69,6 +81,40 @@ class Conversation:
     def set_driver(self, driver: Driver | str) -> None:
         self.options = self.options.with_driver(Driver(driver))
 
+    def set_execution_location(self, location: ExecutionLocation | str) -> None:
+        selected = ExecutionLocation(location)
+        mode = self.options.mode
+        if selected is ExecutionLocation.REMOTE:
+            raise ValueError("Remote runtime is planned for remote machines, but is not supported yet.")
+        if selected is ExecutionLocation.HOST:
+            driver = Driver.TMUX if mode is DriverMode.TMUX else Driver.DIRECT
+            self.options = self.options.with_driver(driver).with_settings(
+                self.options.settings.with_tmux(False)
+            )
+            return
+        if mode is DriverMode.API:
+            raise ValueError("API driver mode is not supported yet.")
+        self.options = self.options.with_driver(Driver.DOCKER).with_settings(
+            self.options.settings.with_tmux(mode is DriverMode.TMUX)
+        )
+
+    def set_driver_mode(self, mode: DriverMode | str) -> None:
+        selected = DriverMode(mode)
+        location = self.options.location
+        if selected is DriverMode.API:
+            raise ValueError("API driver mode is not supported yet.")
+        if location is ExecutionLocation.REMOTE:
+            raise ValueError("Remote runtime is planned for remote machines, but is not supported yet.")
+        if location is ExecutionLocation.DOCKER:
+            self.options = self.options.with_driver(Driver.DOCKER).with_settings(
+                self.options.settings.with_tmux(selected is DriverMode.TMUX)
+            )
+            return
+        driver = Driver.TMUX if selected is DriverMode.TMUX else Driver.DIRECT
+        self.options = self.options.with_driver(driver).with_settings(
+            self.options.settings.with_tmux(False)
+        )
+
     def set_complexity(self, complexity: Complexity | str) -> None:
         self.options = self.options.with_complexity(Complexity(complexity))
 
@@ -109,11 +155,12 @@ class Conversation:
         settings = self.options.settings
         return {
             "backend": self.options.backend.value,
-            "driver": self.options.driver.value,
+            "location": self.options.location.value,
+            "driver": self.options.mode.value,
+            "internal_driver": self.options.driver.value,
             "model": self.options.model or "(default)",
             "complexity": self.options.complexity.value,
             "web": "enabled" if settings.web_search_enabled else "disabled",
-            "tmux": "enabled" if settings.tmux_enabled else "disabled",
             "read_roots": str(len(settings.read_roots)),
             "write_roots": str(len(settings.write_roots)),
             "mcps": str(len(settings.mcp_servers)),

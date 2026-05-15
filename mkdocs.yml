@@ -1,5 +1,5 @@
 site_name: yikes
-site_description: A unified driver for Claude Code and Codex CLI — via tmux and direct subprocess.
+site_description: A runtime layer for Claude Code and Codex CLI across host, Docker, tmux, Python, and web backends.
 repo_url: https://github.com/michael-ikemann/yikes
 repo_name: yikes
 edit_uri: edit/main/docs/
@@ -34,6 +34,14 @@ theme:
     - content.tabs.link
   icon:
     repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
+  - javascripts/mermaid-lightbox.js
 
 markdown_extensions:
   - abbr
