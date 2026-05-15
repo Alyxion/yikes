@@ -103,6 +103,15 @@ docker exec -it yksb-... tmux -S /workspace/yikes-tmux.sock attach -t yikes-code
 
 This is the "real overtake" path: the human terminal attaches to the same pane that yikes! created. The CLI process may crash or exit; the tmux session and Docker container can continue running until explicitly closed.
 
+Inside the terminal UI, the same capabilities are exposed without making users remember tmux commands:
+
+- `/key <key>` sends one tmux key to the selected session. Examples: `/key Down`, `/key Up`, `/key Enter`, `/key Escape`, `/key C-c`.
+- `/paste <text>` loads text into a tmux buffer and pastes it into the selected session.
+- `/view extracted` shows yikes!' parsed answer; `/view full` shows captured terminal output when a backing tmux session can be resolved.
+- `/fullscreen` overtakes the session by execing the native tmux attach command. While attached, all input goes directly to Claude/Codex. Detach with `Ctrl-b` then `d`.
+
+The fullscreen escape intentionally uses tmux's default detach sequence instead of double-Escape. Escape is not a safe global escape hatch in terminal applications because cursor keys and many application-level shortcuts are encoded as escape sequences.
+
 ## Lifecycle
 
 ```mermaid

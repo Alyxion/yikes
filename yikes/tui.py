@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import tempfile
 
 from .attachments import attachable_image_names, extract_image_attachments, read_clipboard_text, save_clipboard_image
 from .capabilities import default_driver_registry
-from .domain import AgentSettings, Backend, Complexity, Driver, ImageAttachment
+from .domain import AgentSettings, Backend, Complexity, Driver, DriverMode, ExecutionLocation, ImageAttachment
 from .services import ChatService, Conversation
 from .session_inventory import SessionInventory, SessionLifecycle
 from .state import AppState, load_app_state, save_app_state
@@ -85,6 +86,22 @@ def run_tui(
             width: 24;
         }
 
+        #question-panel {
+            height: 1fr;
+            border: solid $primary;
+            padding: 1 2;
+        }
+
+        #question-title {
+            height: auto;
+            margin-bottom: 1;
+            color: $accent;
+        }
+
+        #question-body {
+            height: 1fr;
+        }
+
         #composer {
             height: 3;
             dock: bottom;
@@ -134,6 +151,14 @@ def run_tui(
             self.updating_session_tabs = False
             self.close_all_confirmation_pending = False
             self.has_active_session = False
+            self.output_view = "extracted"
+            self.question_mode = False
+            self.question_browse_mode = False
+            self.question_index = 0
+            self.question_choices: dict[str, str] = {}
+            self.question_browse_path = Path.cwd()
+            self.question_browse_entries: list[Path] = []
+            self.question_browse_index = 0
             self.conversation: Conversation = self.service.create_conversation(
                 resolved_backend,
                 resolved_driver,
@@ -162,12 +187,16 @@ def run_tui(
                     with Horizontal(id="session-actions"):
                         yield Button("Attach", id="attach-session")
                         yield Button("Close", id="close-session")
+                    yield Button("Fullscreen tmux", id="fullscreen-session", classes="sidebar-button")
                     yield Button("Close All", id="close-all", classes="sidebar-button")
                 with Vertical(id="chat"):
                     yield Tabs(id="session-tabs")
                     with Container(id="no-session-panel"):
                         yield Static("", id="no-session-message")
                         yield Button("New Session", id="new-session-panel-button", variant="primary")
+                    with Container(id="question-panel"):
+                        yield Static("", id="question-title")
+                        yield Static("", id="question-body")
                     yield RichLog(id="log", wrap=True, markup=True, highlight=True)
                     yield Static("", id="suggestions")
                     with Horizontal(id="composer"):
@@ -209,13 +238,15 @@ def run_tui(
                 prompt = self.query_one("#prompt", Input)
                 await self._submit(prompt.value)
             if event.button.id == "new-session":
-                await self._new_session()
+                self._open_new_session_question()
             if event.button.id == "new-session-panel-button":
-                await self._new_session()
+                self._open_new_session_question()
             if event.button.id == "refresh-sessions":
                 await self._refresh_sessions()
             if event.button.id == "attach-session":
                 await self._attach_selected_session()
+            if event.button.id == "fullscreen-session":
+                await self._fullscreen_selected_session()
             if event.button.id == "close-session":
                 await self._close_selected_session()
             if event.button.id == "close-all":
@@ -227,6 +258,63 @@ def run_tui(
             session_id = str(event.tab.id or "").removeprefix("session-")
             if session_id in self.session_tab_ids and session_id != self.active_session_id:
                 await self._restore_session(session_id, announce=True, refresh_tabs=False)
+
+        async def on_key(self, event: events.Key) -> None:
+            if not self.question_mode:
+                return
+            event.stop()
+            key = event.key
+            if self.question_browse_mode:
+                if key == "up":
+                    self.question_browse_index = max(0, self.question_browse_index - 1)
+                    self._render_question()
+                    return
+                if key == "down":
+                    self.question_browse_index = min(max(0, len(self.question_browse_entries) - 1), self.question_browse_index + 1)
+                    self._render_question()
+                    return
+                if key == "left":
+                    self.question_browse_path = self.question_browse_path.parent
+                    self.question_browse_index = 0
+                    self._render_question()
+                    return
+                if key in {"right", "enter"}:
+                    await self._choose_browse_entry()
+                    return
+                if key == "escape":
+                    self.question_browse_mode = False
+                    self._render_question()
+                    return
+                return
+            if key == "up":
+                self.question_index = max(0, self.question_index - 1)
+                self._render_question()
+                return
+            if key == "down":
+                self.question_index = min(len(self._question_rows()) - 1, self.question_index + 1)
+                self._render_question()
+                return
+            if key == "left":
+                self._cycle_question_value(-1)
+                self._render_question()
+                return
+            if key == "right":
+                self._cycle_question_value(1)
+                self._render_question()
+                return
+            if key == "enter":
+                row = self._question_rows()[self.question_index]
+                if row == "root":
+                    self.question_browse_mode = True
+                    self.question_browse_path = self._initial_browse_path()
+                    self.question_browse_index = 0
+                    self._render_question()
+                    return
+                await self._confirm_new_session_question()
+                return
+            if key == "escape":
+                self._close_question_mode()
+                return
 
         def action_clear(self) -> None:
             self.query_one("#log", RichLog).clear()
@@ -410,6 +498,8 @@ def run_tui(
         def _set_session_view(self, *, active: bool) -> None:
             self.query_one("#log", RichLog).display = active
             self.query_one("#no-session-panel", Container).display = not active
+            self.query_one("#question-panel", Container).display = False
+            self.query_one("#composer", Horizontal).display = True
             prompt = self.query_one("#prompt", Input)
             prompt.placeholder = (
                 "Message, /help, /model, /clear..."
@@ -419,6 +509,182 @@ def run_tui(
 
         def _show_no_session_message(self, message: str) -> None:
             self.query_one("#no-session-message", Static).update(message)
+
+        def _write_status(self, message: str, *, style: str = "bold yellow") -> None:
+            if self.has_active_session:
+                self.query_one("#log", RichLog).write(f"[{style}]yikes![/{style}] {message}")
+            else:
+                self._show_no_session_message(message)
+
+        def _open_new_session_question(self) -> None:
+            options = self.conversation.options
+            self.question_mode = True
+            self.question_browse_mode = False
+            self.question_index = 0
+            self.question_choices = {
+                "backend": options.backend.value,
+                "location": options.location.value if options.location is not ExecutionLocation.REMOTE else ExecutionLocation.HOST.value,
+                "driver": options.mode.value if options.mode is not DriverMode.API else DriverMode.CLI.value,
+                "model": options.model or "default",
+                "complexity": options.complexity.value,
+                "web": "on" if options.settings.web_search_enabled else "off",
+                "root": "none",
+            }
+            self.query_one("#log", RichLog).display = False
+            self.query_one("#no-session-panel", Container).display = False
+            self.query_one("#question-panel", Container).display = True
+            self.query_one("#composer", Horizontal).display = False
+            self._render_question()
+
+        def _close_question_mode(self) -> None:
+            self.question_mode = False
+            self.question_browse_mode = False
+            self.query_one("#question-panel", Container).display = False
+            self.query_one("#composer", Horizontal).display = True
+            if self.has_active_session:
+                self.query_one("#log", RichLog).display = True
+            else:
+                self.query_one("#no-session-panel", Container).display = True
+            self.query_one("#prompt", Input).focus()
+
+        def _question_rows(self) -> list[str]:
+            return ["backend", "location", "driver", "model", "complexity", "web", "root"]
+
+        def _question_options(self, row: str) -> list[str]:
+            if row == "backend":
+                return [backend.value for backend in Backend]
+            if row == "location":
+                return [ExecutionLocation.HOST.value, ExecutionLocation.DOCKER.value]
+            if row == "driver":
+                return [DriverMode.CLI.value, DriverMode.TMUX.value]
+            if row == "model":
+                backend = Backend(self.question_choices.get("backend", Backend.CLAUDE.value))
+                names = [option.name for option in self.conversation.model_registry.options(backend)]
+                return names or ["default"]
+            if row == "complexity":
+                return [level.value for level in Complexity]
+            if row == "web":
+                return ["on", "off"]
+            if row == "root":
+                return ["none", "start dir", "home", "browse"]
+            return []
+
+        def _cycle_question_value(self, direction: int) -> None:
+            row = self._question_rows()[self.question_index]
+            options = self._question_options(row)
+            current = self.question_choices.get(row, options[0])
+            if current not in options:
+                current = options[0]
+            index = options.index(current)
+            self.question_choices[row] = options[(index + direction) % len(options)]
+            if row == "backend":
+                model_options = self._question_options("model")
+                if self.question_choices.get("model") not in model_options:
+                    self.question_choices["model"] = "default"
+
+        def _render_question(self) -> None:
+            title = self.query_one("#question-title", Static)
+            body = self.query_one("#question-body", Static)
+            if self.question_browse_mode:
+                self.question_browse_entries = self._directory_entries(self.question_browse_path)
+                title.update("New session: choose root directory")
+                lines = [
+                    f"[dim]{self.question_browse_path}[/dim]",
+                    "[dim]Up/Down move, Right/Enter open/select, Left parent, Escape back[/dim]",
+                    "",
+                ]
+                for index, entry in enumerate(self.question_browse_entries[:18]):
+                    marker = ">" if index == self.question_browse_index else " "
+                    label = ".." if entry == self.question_browse_path.parent else entry.name
+                    suffix = "/" if entry.is_dir() else ""
+                    lines.append(f"[bold]{marker}[/bold] {label}{suffix}")
+                body.update("\n".join(lines))
+                return
+            title.update("New session")
+            lines = ["[dim]Up/Down choose field, Left/Right change, Enter starts, Escape cancels[/dim]", ""]
+            labels = {
+                "backend": "Backend",
+                "location": "Where",
+                "driver": "How",
+                "model": "Model",
+                "complexity": "Complexity",
+                "web": "Web",
+                "root": "Root dir",
+            }
+            for index, row in enumerate(self._question_rows()):
+                marker = ">" if index == self.question_index else " "
+                value = self.question_choices.get(row, "")
+                if row == "root" and value == "browse":
+                    value = "browse..."
+                lines.append(f"[bold]{marker} {labels[row]:<11}[/bold] {value}")
+            lines.append("")
+            lines.append("[dim]Root dir defaults to none, so no project directory is mounted or trusted unless selected.[/dim]")
+            body.update("\n".join(lines))
+
+        def _directory_entries(self, path: Path) -> list[Path]:
+            try:
+                resolved = path.expanduser().resolve()
+                children = sorted(
+                    [item for item in resolved.iterdir() if item.is_dir() and not item.name.startswith(".")],
+                    key=lambda item: item.name.lower(),
+                )
+            except OSError:
+                resolved = Path.home()
+                children = []
+            return [resolved.parent, *children]
+
+        def _initial_browse_path(self) -> Path:
+            root = self.question_choices.get("root", "none")
+            if root == "home":
+                return Path.home()
+            if root == "start dir":
+                return Path.cwd()
+            if root.startswith("/"):
+                return Path(root)
+            return Path.cwd()
+
+        async def _choose_browse_entry(self) -> None:
+            if not self.question_browse_entries:
+                return
+            selected = self.question_browse_entries[self.question_browse_index]
+            if selected == self.question_browse_path.parent:
+                self.question_browse_path = selected
+                self.question_browse_index = 0
+                self._render_question()
+                return
+            self.question_choices["root"] = str(selected)
+            self.question_browse_mode = False
+            self._render_question()
+
+        async def _confirm_new_session_question(self) -> None:
+            root = self.question_choices.get("root", "none")
+            cwd_choice: Path | None
+            if root == "none":
+                cwd_choice = Path(tempfile.mkdtemp(prefix="yikes-session-"))
+            elif root == "start dir":
+                cwd_choice = Path.cwd()
+            elif root == "home":
+                cwd_choice = Path.home()
+            elif root == "browse":
+                self.question_browse_mode = True
+                self.question_browse_path = self._initial_browse_path()
+                self._render_question()
+                return
+            else:
+                cwd_choice = Path(root)
+            try:
+                self.conversation.set_backend(Backend(self.question_choices["backend"]))
+                self.conversation.set_execution_location(ExecutionLocation(self.question_choices["location"]))
+                self.conversation.set_driver_mode(DriverMode(self.question_choices["driver"]))
+                model = self.question_choices.get("model", "default")
+                self.conversation.set_model(None if model == "default" else model)
+                self.conversation.set_complexity(Complexity(self.question_choices["complexity"]))
+                self.conversation.set_web_search(self.question_choices.get("web") == "on")
+            except ValueError as exc:
+                self.query_one("#question-body", Static).update(f"[bold red]{exc}[/bold red]")
+                return
+            self._close_question_mode()
+            await self._new_session(cwd=cwd_choice)
 
         async def _close_selected_session(self) -> None:
             log = self.query_one("#log", RichLog)
@@ -454,6 +720,21 @@ def run_tui(
                 log.write(f"[bold red]yikes![/bold red] Session not found or not attachable: {session_id}")
                 await self._refresh_sessions()
                 return
+            self.attach_command = command
+            self.exit()
+
+        async def _fullscreen_selected_session(self) -> None:
+            log = self.query_one("#log", RichLog)
+            session_id = self._selected_session_id()
+            if not session_id:
+                self._write_status("No tmux session selected.")
+                return
+            command = SessionLifecycle().attach_command(session_id)
+            if command is None:
+                self._write_status(f"Session is not attachable: {session_id}")
+                await self._refresh_sessions()
+                return
+            log.write("[bold green]yikes![/bold green] Entering fullscreen tmux. Detach with Ctrl-b then d.")
             self.attach_command = command
             self.exit()
 
@@ -533,9 +814,10 @@ def run_tui(
             log = self.query_one("#log", RichLog)
             command_name = text.strip().split(maxsplit=1)[0].lower()
             if command_name == "/new":
-                log.clear()
-                self.has_active_session = True
-                self._set_session_view(active=True)
+                self._open_new_session_question()
+                return
+            if await self._handle_tui_command(text):
+                return
             if self.has_active_session:
                 log.write(f"[bold blue]Command:[/bold blue] {text}")
             result = self.conversation.run_slash_command(text)
@@ -556,6 +838,48 @@ def run_tui(
             await self._refresh_sessions()
             self._save_state()
 
+        async def _handle_tui_command(self, text: str) -> bool:
+            parts = text.strip().split(maxsplit=1)
+            command = parts[0].lower() if parts else ""
+            arg = parts[1] if len(parts) > 1 else ""
+            if command in {"/fullscreen", "/overtake"}:
+                await self._fullscreen_selected_session()
+                return True
+            if command == "/view":
+                value = arg.strip().lower()
+                if value not in {"full", "extracted"}:
+                    self._write_status("Usage: /view [full|extracted]")
+                    return True
+                self.output_view = value
+                self._write_status(f"Output view set to {value}.", style="bold green")
+                return True
+            if command == "/key":
+                key = arg.strip()
+                if not key:
+                    self._write_status("Usage: /key <Enter|Up|Down|Left|Right|Escape|C-c|...>")
+                    return True
+                session_id = self._selected_session_id()
+                if not session_id:
+                    self._write_status("No tmux session selected.")
+                    return True
+                result = SessionLifecycle().send_key(session_id, key)
+                style = "bold green" if result.closed else "bold red"
+                self._write_status(result.message, style=style)
+                return True
+            if command == "/paste":
+                if not arg:
+                    self._write_status("Usage: /paste <text>")
+                    return True
+                session_id = self._selected_session_id()
+                if not session_id:
+                    self._write_status("No tmux session selected.")
+                    return True
+                result = SessionLifecycle().paste_text(session_id, arg)
+                style = "bold green" if result.closed else "bold red"
+                self._write_status(result.message, style=style)
+                return True
+            return False
+
         @work(thread=True)
         def ask_backend(self, text: str, attachments: tuple[ImageAttachment, ...] = ()) -> None:
             log = self.query_one("#log", RichLog)
@@ -565,7 +889,33 @@ def run_tui(
             except Exception as exc:
                 self.call_from_thread(log.write, f"[bold red]Error:[/bold red] {exc}")
                 return
+            if self.output_view == "full":
+                full_output = self._full_output(answer)
+                self.call_from_thread(log.write, f"[bold magenta]Full output:[/bold magenta]\n{full_output}")
+                return
             self.call_from_thread(log.write, f"[bold magenta]Assistant:[/bold magenta] {answer}")
+
+        def _full_output(self, answer: str) -> str:
+            session_id = self._snapshot_session_id()
+            if session_id:
+                snapshot = SessionLifecycle().snapshot(session_id)
+                if snapshot:
+                    return snapshot
+            return f"{self.conversation.render_prompt()}\n\nAssistant: {answer}"
+
+        def _snapshot_session_id(self) -> str | None:
+            if self.active_session_id and self.active_session_id in self.session_tab_ids:
+                return self.active_session_id
+            sessions = SessionInventory().list()
+            options = self.conversation.options
+            for session in sessions:
+                if session.backend != options.backend.value:
+                    continue
+                if session.runtime == "tmux" and session.location == str(options.cwd):
+                    return session.id
+                if session.runtime == "docker" and options.driver.value == "docker":
+                    return session.id
+            return None
 
     app = TerminalApp()
     app.run()

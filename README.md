@@ -54,7 +54,9 @@ poetry run yikes attach <session-id>     # overtake an attachable session
 poetry run yikes close <session-id>      # close one session
 ```
 
-Inside the app, session tabs sit at the top and detailed configuration stays in slash commands. `/new` starts a fresh session, `/clear` clears the current visible conversation, and commands such as `/backend`, `/location`, `/driver`, `/models`, `/web`, `/dirs`, `/mcp`, `/sessions`, and `/restart` are backed by the same command registry used by the Python layer.
+Inside the app, session tabs sit at the top and detailed configuration stays in slash commands. `/new` opens a question-style session chooser with the normal input bar hidden: use Up/Down to move through backend, location, driver, model, complexity, web, and root directory; use Left/Right to change values; press Enter to start. Commands such as `/backend`, `/location`, `/driver`, `/models`, `/web`, `/dirs`, `/mcp`, `/sessions`, and `/restart` are backed by the same command registry used by the Python layer.
+
+For tmux sessions, `/view extracted` shows the clean answer and `/view full` shows the captured terminal output where available. `/key Down`, `/key Up`, `/key Enter`, and `/paste ...` can answer native TUI prompts without leaving yikes!. `/fullscreen` hands the whole terminal to tmux for full native control; detach back out with `Ctrl-b` then `d`.
 
 To attach images in the terminal app, use `Ctrl+V` for smart paste: yikes! imports an image from the OS clipboard when one is present, otherwise it inserts clipboard text. Dragged or pasted image file paths attach to the next message. `Ctrl+O` forces image-only paste. Host sessions use the local path directly; Docker sessions copy the image into the sandbox before sending the turn.
 

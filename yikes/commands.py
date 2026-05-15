@@ -351,6 +351,18 @@ def default_command_registry() -> CommandRegistry:
     def restart_command(_context: CommandContext, _arg: str) -> CommandResult:
         return CommandResult("Restarting yikes...", restart_requested=True)
 
+    def view_command(_context: CommandContext, _arg: str) -> CommandResult:
+        return CommandResult("Usage: /view [full|extracted]")
+
+    def key_command(_context: CommandContext, _arg: str) -> CommandResult:
+        return CommandResult("Usage: /key <Enter|Up|Down|Left|Right|Escape|C-c|...>")
+
+    def paste_command(_context: CommandContext, _arg: str) -> CommandResult:
+        return CommandResult("Usage: /paste <text>")
+
+    def fullscreen_command(_context: CommandContext, _arg: str) -> CommandResult:
+        return CommandResult("Fullscreen tmux attach is available in the terminal UI.")
+
     def web_command(context: CommandContext, arg: str) -> CommandResult:
         normalized = arg.lower()
         if not normalized:
@@ -514,6 +526,14 @@ def default_command_registry() -> CommandRegistry:
         options = [
             CommandSuggestion("on", "Enable real interactive tmux transport", "/tmux on"),
             CommandSuggestion("off", "Disable tmux transport", "/tmux off"),
+        ]
+        return [option for option in options if not normalized or option.value.startswith(normalized)]
+
+    def view_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+        normalized = prefix.lower()
+        options = [
+            CommandSuggestion("extracted", "Show extracted assistant answers", "/view extracted"),
+            CommandSuggestion("full", "Show full captured output where available", "/view full"),
         ]
         return [option for option in options if not normalized or option.value.startswith(normalized)]
 
@@ -715,6 +735,25 @@ def default_command_registry() -> CommandRegistry:
         )
     )
     registry.register(CommandSpec("restart", "Restart the terminal app and reload local code", restart_command))
+    registry.register(
+        CommandSpec(
+            "view",
+            "Switch terminal output view",
+            view_command,
+            usage="[full|extracted]",
+            argument_suggestions=view_suggestions,
+        )
+    )
+    registry.register(CommandSpec("key", "Send one raw key to the selected tmux session", key_command, usage="<key>"))
+    registry.register(CommandSpec("paste", "Paste text into the selected tmux session", paste_command, usage="<text>"))
+    registry.register(
+        CommandSpec(
+            "fullscreen",
+            "Overtake the selected tmux session in fullscreen",
+            fullscreen_command,
+            aliases=("overtake",),
+        )
+    )
     registry.register(CommandSpec("exit", "Exit the terminal app", exit_command))
     return registry
 

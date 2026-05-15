@@ -313,6 +313,63 @@ def test_session_lifecycle_returns_attach_commands_for_tmux_and_docker_tmux(tmp_
     ]
 
 
+def test_session_lifecycle_sends_keys_to_tmux(tmp_path: Path, monkeypatch) -> None:
+    runtime_store = tmp_path / "runtime"
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CLAUDE,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket="/tmp/yikes.sock", tmux_session="s1"),
+        cwd=tmp_path,
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr("yikes.session_inventory.subprocess.run", fake_run)
+
+    result = SessionLifecycle(runtime_store=runtime_store, sandbox_store=tmp_path / "sandboxes").send_key(meta.id, "Down")
+
+    assert result.closed is True
+    assert calls == [["tmux", "-S", "/tmp/yikes.sock", "send-keys", "-t", "s1", "Down"]]
+
+
+def test_session_lifecycle_pastes_text_to_tmux(tmp_path: Path, monkeypatch) -> None:
+    runtime_store = tmp_path / "runtime"
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CLAUDE,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket="/tmp/yikes.sock", tmux_session="s1"),
+        cwd=tmp_path,
+    )
+    calls: list[tuple[list[str], object]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object):
+        calls.append((cmd, kwargs.get("input")))
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr("yikes.session_inventory.subprocess.run", fake_run)
+
+    result = SessionLifecycle(runtime_store=runtime_store, sandbox_store=tmp_path / "sandboxes").paste_text(meta.id, "hello")
+
+    assert result.closed is True
+    assert calls[0] == (["tmux", "-S", "/tmp/yikes.sock", "load-buffer", "-b", f"yikes-{meta.id}", "-"], "hello")
+    assert calls[1] == (["tmux", "-S", "/tmp/yikes.sock", "paste-buffer", "-d", "-b", f"yikes-{meta.id}", "-t", "s1"], None)
+
+
 def test_docker_tmux_without_explicit_cwd_uses_container_workspace(tmp_path: Path, monkeypatch) -> None:
     sandbox_store = tmp_path / "sandboxes"
     monkeypatch.setattr(drivers, "SandboxManager", lambda: SandboxManager(sandbox_store))

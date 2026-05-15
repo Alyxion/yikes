@@ -41,7 +41,8 @@ The UI keeps session navigation visible and moves rarely changed configuration i
 
 - Session tabs live across the top and represent reconnectable durable sessions.
 - The sidebar shows compact status plus session actions only.
-- `/backend`, `/location`, `/driver`, `/model`, `/complexity`, `/web`, `/dirs`, `/mcp`, and `/new` are the canonical controls.
+- `/backend`, `/location`, `/driver`, `/model`, `/complexity`, `/web`, `/dirs`, and `/mcp` are the canonical controls.
+- `/new` opens a question-style chooser instead of immediately starting. The composer is hidden, Up/Down select the field, Left/Right change values, Enter confirms, and Escape cancels. The root-directory field defaults to `none`; selecting a directory is explicit.
 - Location is `host`, `docker`, or planned `remote`.
 - Driver is `cli`, `tmux`, or planned `api`.
 
@@ -136,6 +137,17 @@ tmux is not the semantic control plane when a backend exposes a structured proto
 If no `cwd` is passed for a tmux-backed session, yikes! allocates a random workspace where the session starts. Local tmux sessions get a temporary host directory. Docker sessions without an explicit directory get a random directory inside the container volume rather than silently mounting the caller's host cwd. Generated workspaces may have their first-run trust prompt confirmed automatically; explicit directories are left for the user to approve or overtake manually.
 
 When a persisted tmux session is restored from the terminal UI, yikes! captures the last several hundred tmux pane lines and writes them back into the visible log before the user sends the next turn. That makes CLI restarts a reconnect, not a blank new control surface.
+
+The terminal UI has two output views:
+
+- `/view extracted` keeps the normal clean assistant answer view.
+- `/view full` shows the captured tmux screen where yikes! can resolve the backing session, including the prompt, backend UI text, and result markers.
+
+For interactive prompts, yikes! exposes both small controls and full overtake:
+
+- `/key Up`, `/key Down`, `/key Enter`, `/key Escape`, or similar sends one tmux key to the selected session.
+- `/paste <text>` pastes text into the selected tmux session.
+- `/fullscreen` exits the yikes! control UI into a real `tmux attach`, so every key goes directly to Claude/Codex. The reliable terminal escape is tmux's native detach sequence: `Ctrl-b`, then `d`. Double-Escape is intentionally avoided because Escape is part of many terminal key sequences, including cursor keys and modal UI behavior.
 
 ---
 

@@ -234,6 +234,53 @@ class SessionLifecycle:
             return ["docker", "exec", "-it", sandbox.container_name, "tmux", "-S", socket, "attach", "-t", session]
         return ["docker", "exec", "-it", sandbox.container_name, "sh", "-lc", "cd /workspace/project && exec bash"]
 
+    def send_key(self, session_id: str, key: str) -> CloseResult:
+        durable = DurableSessionManager(self.runtime_store).get(session_id)
+        if durable is not None and durable.runtime.kind is RuntimeKind.TMUX and durable.runtime.tmux_socket:
+            cmd = ["tmux", "-S", durable.runtime.tmux_socket, "send-keys"]
+            if durable.runtime.tmux_session:
+                cmd.extend(["-t", durable.runtime.tmux_session])
+            cmd.append(key)
+            return _run_control_command(cmd, session_id=session_id, runtime="tmux", action=f"Sent key {key}")
+        sandbox = SandboxManager(self.sandbox_store).get(session_id)
+        if sandbox is None:
+            return CloseResult(session_id, "unknown", False, f"Session not found: {session_id}")
+        socket = sandbox.meta.user_data.get("tmux_socket")
+        session = sandbox.meta.user_data.get("tmux_session")
+        if not socket or not session:
+            return CloseResult(session_id, "docker", False, f"Docker session is not a tmux session: {session_id}")
+        return _run_control_command(
+            ["docker", "exec", sandbox.container_name, "tmux", "-S", socket, "send-keys", "-t", session, key],
+            session_id=session_id,
+            runtime="docker",
+            action=f"Sent key {key}",
+        )
+
+    def paste_text(self, session_id: str, text: str) -> CloseResult:
+        durable = DurableSessionManager(self.runtime_store).get(session_id)
+        if durable is not None and durable.runtime.kind is RuntimeKind.TMUX and durable.runtime.tmux_socket:
+            return _tmux_paste_text(
+                ["tmux", "-S", durable.runtime.tmux_socket],
+                session_id=session_id,
+                runtime="tmux",
+                target=durable.runtime.tmux_session,
+                text=text,
+            )
+        sandbox = SandboxManager(self.sandbox_store).get(session_id)
+        if sandbox is None:
+            return CloseResult(session_id, "unknown", False, f"Session not found: {session_id}")
+        socket = sandbox.meta.user_data.get("tmux_socket")
+        session = sandbox.meta.user_data.get("tmux_session")
+        if not socket or not session:
+            return CloseResult(session_id, "docker", False, f"Docker session is not a tmux session: {session_id}")
+        return _tmux_paste_text(
+            ["docker", "exec", "-i", sandbox.container_name, "tmux", "-S", socket],
+            session_id=session_id,
+            runtime="docker",
+            target=session,
+            text=text,
+        )
+
     def _close_docker(self, session_id: str) -> CloseResult | None:
         manager = SandboxManager(self.sandbox_store)
         session = manager.get(session_id)
@@ -277,3 +324,45 @@ def _capture_output(cmd: list[str]) -> str | None:
         return None
     text = result.stdout.strip()
     return text or None
+
+
+def _run_control_command(cmd: list[str], *, session_id: str, runtime: str, action: str) -> CloseResult:
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    except OSError as exc:
+        return CloseResult(session_id, runtime, False, f"{action} failed for {session_id}: {exc}")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        return CloseResult(session_id, runtime, False, f"{action} failed for {session_id}{suffix}")
+    return CloseResult(session_id, runtime, True, f"{action} for {session_id}.")
+
+
+def _tmux_paste_text(
+    prefix: list[str],
+    *,
+    session_id: str,
+    runtime: str,
+    target: str | None,
+    text: str,
+) -> CloseResult:
+    buffer_name = f"yikes-{session_id}"
+    load = subprocess.run(
+        [*prefix, "load-buffer", "-b", buffer_name, "-"],
+        input=text,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if load.returncode != 0:
+        detail = (load.stderr or load.stdout or "").strip()
+        return CloseResult(session_id, runtime, False, f"Paste failed for {session_id}: {detail}")
+    cmd = [*prefix, "paste-buffer", "-d", "-b", buffer_name]
+    if target:
+        cmd.extend(["-t", target])
+    paste = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    if paste.returncode != 0:
+        detail = (paste.stderr or paste.stdout or "").strip()
+        return CloseResult(session_id, runtime, False, f"Paste failed for {session_id}: {detail}")
+    return CloseResult(session_id, runtime, True, f"Pasted text into {session_id}.")
