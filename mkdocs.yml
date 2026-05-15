@@ -80,8 +80,12 @@ nav:
   - tmux Layer: tmux-layer.md
   - Streaming & Updates: streaming.md
   - Python Library: python-library.md
+  - Embedding: embedding.md
+  - OpenHort Parity: openhort-parity.md
   - CLI Wrapper: cli-wrapper.md
   - Roadmap: roadmap.md
+  - Changes:
+      - OpenHort Alignment: changes/openhort-alignment.md
 
 extra:
   social:

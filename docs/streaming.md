@@ -81,20 +81,20 @@ flowchart LR
 
 We map each backend's native event types to engine events directly. Latency is bounded by the source — usually a few ms.
 
-## Pipeline (remote-control driver)
+## Pipeline (remote-server driver)
 
-Remote-control drivers prefer backend-native events over terminal bytes:
+Remote-server drivers consume Yikes-native events from another Yikes process over HTTP/WebSocket:
 
 ```mermaid
 flowchart LR
-    src[("Claude Remote Control status<br/>or<br/>Codex app-server websocket")] --> parse[remote adapter parser]
+    src[("remote Yikes server<br/>event replay + live stream")] --> parse[remote adapter parser]
     parse --> evbus[engine event bus]
-    evbus --> status["SessionReady / RemoteControlInfo"]
-    evbus --> stream["StreamDelta where backend provides it"]
-    evbus --> approval["ApprovalRequest where backend provides it"]
+    evbus --> status["SessionReady / RemoteSessionInfo"]
+    evbus --> stream["StreamDelta"]
+    evbus --> approval["ApprovalRequest"]
 ```
 
-Claude Remote Control is primarily a remote-human control path, so yikes should expect lifecycle/status metadata and native transcript correlation, not a full terminal mirror. Codex websocket app-server is the same JSON-RPC protocol as direct app-server over a remote transport, so it can emit the same structured turn, item, and approval events when the websocket is healthy.
+Claude Remote Control is not this path. It is a remote-human control UI owned by Claude. For OpenHort and web clients, the remote path is a Yikes server that owns the Claude/Codex process and streams normalized Yikes events.
 
 ## Frame sync (DECSET 2026)
 
@@ -144,7 +144,7 @@ class Snapshot:
     ts: float
 ```
 
-For the `tmux` driver, snapshots come from our pyte `screen.display`. For the `direct` driver, we maintain a virtual "rendered" buffer of accumulated assistant text and tool output — there's no actual screen, so the snapshot is just "what would a user have seen if this ran in a terminal." For the `remote-control` driver, snapshots are backend-dependent: Codex app-server can expose structured conversation state, while Claude Remote Control may only expose session status plus links to the native remote UI.
+For the `tmux` driver, snapshots come from our pyte `screen.display`. For the `direct` driver, we maintain a virtual "rendered" buffer of accumulated assistant text and tool output — there's no actual screen, so the snapshot is just "what would a user have seen if this ran in a terminal." For the future `remote-server` driver, snapshots are replayed from the remote Yikes session state.
 
 ## Event contract for callers
 

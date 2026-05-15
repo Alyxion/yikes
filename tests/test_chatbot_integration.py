@@ -16,10 +16,10 @@ pytestmark = pytest.mark.integration
 MATRIX = [
     (Backend.CLAUDE, Driver.DIRECT),
     (Backend.CLAUDE, Driver.TMUX),
-    (Backend.CLAUDE, Driver.REMOTE_CONTROL),
+    (Backend.CLAUDE, Driver.DOCKER),
     (Backend.CODEX, Driver.DIRECT),
     (Backend.CODEX, Driver.TMUX),
-    (Backend.CODEX, Driver.REMOTE_CONTROL),
+    (Backend.CODEX, Driver.DOCKER),
 ]
 
 
@@ -40,13 +40,8 @@ def test_chatbot_remembers_name_and_calculates(backend: Backend, driver: Driver)
     _require_binary(backend.value)
     if driver is Driver.TMUX:
         _require_binary("tmux")
-    if backend is Backend.CLAUDE and driver is Driver.REMOTE_CONTROL:
-        if os.environ.get("YIKES_CLAUDE_REMOTE_FALLBACK") != "direct":
-            pytest.skip(
-                "Claude Remote Control is a human remote UI; set "
-                "YIKES_CLAUDE_REMOTE_FALLBACK=direct to exercise the explicit "
-                "remote-control test slot through Claude's automatable protocol"
-            )
+    if driver is Driver.DOCKER:
+        _require_binary("docker")
 
     bot = Chatbot(backend, driver, timeout=float(os.environ.get("YIKES_E2E_TIMEOUT", "240")))
     try:

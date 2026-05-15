@@ -2,7 +2,49 @@ from .chatbot import Backend, ChatResult, Chatbot, Driver, run_goal_flow
 from .commands import CommandRegistry, CommandSuggestion, ModelRegistry
 from .domain import AgentSettings, ChatOptions, Complexity, McpServer, Message, MessageRole
 from .errors import BackendUnavailable, DriverUnavailable, YikesError
-from .services import ChatService, Conversation
+from .events import EventLog, EventRecord
+from .credentials import (
+    CallbackCredentialProvider,
+    ClaudeCredentialProvider,
+    CodexCredentialProvider,
+    CredentialBroker,
+    CredentialUnavailable,
+    CredentialValue,
+    EnvCredentialProvider,
+    StaticCredentialProvider,
+)
+from .mcp import (
+    McpConfig,
+    McpServerConfig,
+    ToolFilter,
+    build_claude_mcp_json,
+    compute_disallowed_tools,
+    filter_tools_list,
+    parse_inline_mcp,
+    resolve_servers,
+)
+from .mcp_proxy import McpSseProxy, ProxyManager
+from .remote import (
+    RemoteClient,
+    RemoteClientConfig,
+    RemoteCommandHandler,
+    RemoteProtocolError,
+    RemoteServerConfig,
+    RemoteSessionRegistry,
+    YikesRemoteServer,
+)
+from .runtime import (
+    CredentialGrant,
+    DurableSessionManager,
+    DurableSessionMeta,
+    RuntimeKind,
+    RuntimeRef,
+    SessionState,
+)
+from .sandbox import SandboxConfig, SandboxManager, SandboxSession
+from .services import ChatService, Conversation, Session
+from .session_inventory import CloseResult, SessionInventory, SessionLifecycle, SessionSummary
+from .tokens import TokenStore
 
 __all__ = [
     "Backend",
@@ -12,16 +54,58 @@ __all__ = [
     "ChatOptions",
     "Chatbot",
     "ChatService",
+    "CloseResult",
     "CommandRegistry",
     "CommandSuggestion",
     "Complexity",
     "Conversation",
+    "CredentialGrant",
+    "CredentialBroker",
+    "CredentialUnavailable",
+    "CredentialValue",
+    "CallbackCredentialProvider",
+    "ClaudeCredentialProvider",
+    "CodexCredentialProvider",
     "Driver",
     "DriverUnavailable",
+    "DurableSessionManager",
+    "DurableSessionMeta",
+    "EnvCredentialProvider",
+    "EventLog",
+    "EventRecord",
     "Message",
     "MessageRole",
+    "McpConfig",
     "McpServer",
+    "McpServerConfig",
+    "McpSseProxy",
     "ModelRegistry",
+    "ProxyManager",
+    "RemoteClient",
+    "RemoteClientConfig",
+    "RemoteCommandHandler",
+    "RemoteProtocolError",
+    "RemoteServerConfig",
+    "RemoteSessionRegistry",
+    "RuntimeKind",
+    "RuntimeRef",
+    "SandboxConfig",
+    "SandboxManager",
+    "SandboxSession",
+    "Session",
+    "SessionInventory",
+    "SessionLifecycle",
+    "SessionSummary",
+    "SessionState",
+    "StaticCredentialProvider",
+    "ToolFilter",
+    "TokenStore",
     "YikesError",
+    "YikesRemoteServer",
+    "build_claude_mcp_json",
+    "compute_disallowed_tools",
+    "filter_tools_list",
+    "parse_inline_mcp",
+    "resolve_servers",
     "run_goal_flow",
 ]

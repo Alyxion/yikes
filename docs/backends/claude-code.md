@@ -1,10 +1,11 @@
 # Backend: Claude Code
 
-The Claude Code adapter (`yikes.backends.claude`) drives the `claude` CLI in three modes:
+The Claude Code adapter (`yikes.backends.claude`) drives the `claude` CLI in two chat-usable modes today:
 
 - **TUI mode** — `claude` (REPL) inside a tmux pane. Keystrokes for everything.
 - **Headless mode** — `claude -p ... --output-format stream-json --verbose`. Parsed NDJSON straight into the event bus.
-- **Remote-control mode** — `claude --remote-control [name]` or `/remote-control`, where the local process is controlled through claude.ai / the Claude app.
+
+Claude's native Remote Control (`claude --remote-control` / `/remote-control`) is a human remote UI. Yikes does not treat it as a prompt/response chat runtime. The future remote path for OpenHort/web clients is a Yikes `remote-server` session that owns a normal Claude backend process.
 
 ## I/O reference (summary)
 
@@ -18,7 +19,7 @@ Full reference is in the research notes; here's what the adapter actually uses.
 | Multi-turn (resume) | `claude --resume <session-id>` |
 | Continue most-recent | `claude --continue` |
 | Streaming input/output | `--input-format stream-json --output-format stream-json` |
-| Remote Control | `--remote-control [name]` / `--rc [name]`, or `/remote-control` inside an interactive session |
+| Native remote human UI | `--remote-control [name]` / `--rc [name]`, or `/remote-control` inside an interactive session; not a Yikes chat transport |
 | File reference in prompt | `@path/to/file` (glob OK) |
 | System prompt | `--system-prompt`, `--append-system-prompt` (and `*-file` variants) |
 | Settings override | `--settings '{...}'` or `--settings ./file.json` |
@@ -154,13 +155,13 @@ For a streaming **bidirectional** session in headless mode, use `--input-format 
 
 This is the closest direct-mode analogue to a long-lived TUI session, but mid-turn slash commands and approval flows are not available — for those, switch to `tmux` mode.
 
-## Driving Claude Code in **remote-control mode**
+## Claude Native Remote Control
 
 ```bash
 claude --remote-control "My Project"
 ```
 
-The local `claude` process stays running and makes outbound TLS connections to Anthropic. Remote users connect through `claude.ai/code` or the Claude mobile app; yikes records the remote session metadata and emits lifecycle/status events.
+The local `claude` process stays running and makes outbound TLS connections to Anthropic. Remote users connect through `claude.ai/code` or the Claude mobile app. This is useful to understand, but it is not the remote runtime Yikes will expose to OpenHort.
 
 Remote-control mode is a native remote-human workflow, not a terminal byte stream:
 
@@ -170,7 +171,7 @@ Remote-control mode is a native remote-human workflow, not a terminal byte strea
 - Some local-only slash commands and terminal pickers are not available remotely.
 - We do not infer approvals by sending raw `y` keystrokes in this mode; approvals are handled by Claude's remote UI.
 
-For automated structured output, use `direct`. For local TUI attach or local prompt automation, use `tmux`. For remote/mobile continuation by a human through Claude's own remote UI, use Claude remote-control lifecycle commands. Do not model Claude remote-control as a yikes chat transport unless Claude exposes a documented programmatic turn API.
+For automated structured output, use `direct`. For local TUI attach or local prompt automation, use `tmux`. For OpenHort/web remote attach, use the future Yikes `remote-server` runtime. Do not model Claude Remote Control as a Yikes chat transport unless Claude exposes a documented programmatic turn API.
 
 ## Adapter responsibilities
 
@@ -187,14 +188,9 @@ class ClaudeAdapter(BackendAdapter):
         # wait for prompt sentinel, register keystroke vocabulary
         ...
 
-    async def start_remote_control_session(self, opts: SessionOptions) -> None:
-        # start "claude --remote-control [name]" and parse remote URL/status
-        ...
-
     def parse(self, raw: bytes) -> Iterator[Event]:
         # direct mode: NDJSON → events
         # tmux mode: pyte dirty-line diff → events + approval-prompt detection
-        # remote-control mode: lifecycle/status metadata from the native remote surface
         ...
 ```
 
@@ -229,4 +225,4 @@ Manual updates: `claude update` (and `/doctor` to inspect the installation).
 - **`--bare` skips CLAUDE.md, hooks, plugins, MCP.** Use it for deterministic CI; *don't* use it for the tmux mode where the user likely wants their config.
 - **Multi-line paste via tmux can collapse to one line** if the user has `extended-keys-format csi-u`. The tmux layer runs on a dedicated socket with that off — see [tmux Layer](../tmux-layer.md#isolation).
 - **Approval-prompt detection is heuristic.** If Claude Code changes its modal rendering, our regex needs updating. Wrap detection in a versioned matcher with a fallback test fixture.
-- **Remote Control is session-level.** It is useful for remote/mobile continuation, but it is not a replacement for `stream-json` when the caller needs machine-readable deltas.
+- **Remote Control is session-level and human-oriented.** It is useful for remote/mobile continuation, but it is not a replacement for `stream-json` or the future Yikes remote-server when the caller needs machine-readable deltas.

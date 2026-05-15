@@ -7,7 +7,7 @@ The library is the canonical face. The CLI is a thin shell over it (so behaviour
 
 ## Surface at a glance
 
-Current synchronous chatbot slice:
+Current synchronous session slice:
 
 ```python
 from pathlib import Path
@@ -19,13 +19,15 @@ settings = AgentSettings(
     write_roots=(Path("tmp"),),
     mcp_servers=(McpServer("fs", "python", ("-m", "server")),),
 )
-conversation = ChatService().create_conversation(
+session = ChatService().create_session(
     Backend.CLAUDE,
     Driver.DIRECT,
     settings=settings,
 )
-answer = conversation.ask("Hello, my name is Michael. How are you doing?")
+answer = session.prompt("Hello, my name is Michael. How are you doing?")
 ```
+
+`Session` currently wraps the in-memory chatbot conversation and is safe to use from a Python web backend. It exposes `id`, `prompt()`, `ask()`, `messages`, `status()`, and slash-command helpers. The later async manager keeps the same mental model but moves ownership into a durable runtime process so sessions survive frontend disconnects.
 
 Larger target async session surface:
 
@@ -299,11 +301,11 @@ await session.turn([
 ```
 
 - `Part.text(str)` — raw text.
-- `Part.image(path)` — adds native image input in direct mode, attaches via paste-buffer or `@path` in tmux mode, and in remote-control mode must resolve on the host where the backend process runs.
+- `Part.image(path)` — adds native image input in direct mode, attaches via paste-buffer or `@path` in tmux mode, and in remote-server mode must resolve on the host where the backend process runs or be transferred explicitly.
 - `Part.file_ref(path)` — translates to `@path` for both backends, after validating that the path exists on the backend host.
 - `Part.from_stdin()` — for piped input.
 
-For remote-control sessions, local paths are not assumed to exist remotely. The adapter either copies the file into the remote workspace through an explicit transfer hook or rejects the part with `AttachmentUnavailable`.
+For remote-server sessions, local paths are not assumed to exist remotely. The adapter either copies the file into the remote workspace through an explicit transfer hook or rejects the part with `AttachmentUnavailable`.
 
 ## Configuration
 
@@ -316,8 +318,8 @@ settings.tmux.pane_height = 60
 settings.tmux.frame_sync = True
 settings.tmux.coalesce_ms = 80
 
-settings.remote_control.default_host = "127.0.0.1"
-settings.remote_control.require_auth_for_non_loopback = True
+settings.remote_server.default_host = "127.0.0.1"
+settings.remote_server.require_auth_for_non_loopback = True
 
 settings.transcripts.dir = Path.home() / ".yikes" / "sessions"
 settings.transcripts.persist = True
@@ -368,7 +370,7 @@ async for ev in s.events():               # picks up where A left off
     ...
 ```
 
-This works because the underlying tmux pane, direct app-server subprocess, or remote-control endpoint is still alive. The transcript is replayed from JSONL up to the last seen `seq`, then live events continue.
+This works because the underlying tmux pane, direct app-server subprocess, Docker runtime, or remote-server session is still alive. The transcript is replayed from JSONL up to the last seen `seq`, then live events continue.
 
 ## Type discipline
 
@@ -408,10 +410,10 @@ yikes/
 │   ├── direct/
 │       ├── driver.py
 │       └── pty.py
-│   └── remote_control/
+│   └── remote_server/
 │       ├── driver.py
-│       ├── claude.py
-│       └── codex_ws.py
+│       ├── client.py
+│       └── auth.py
 ├── backends/
 │   ├── base.py
 │   ├── claude/

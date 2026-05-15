@@ -8,7 +8,7 @@ flowchart LR
     mode -->|tmux| tui["codex (TUI)<br/>inside tmux pane"]
     mode -->|direct, long-lived| as["codex app-server<br/>(JSON-RPC stdio)"]
     mode -->|direct, one-shot| ex["codex exec --json<br/>(NDJSON)"]
-    mode -->|remote-control| rc["codex app-server websocket<br/>or codex --remote"]
+    mode -->|remote-server| rc["remote Yikes server<br/>owning Codex app-server"]
 ```
 
 **Default for `direct`** is `codex app-server` — it gives token-level deltas, supports turn cancellation, and is the canonical programmatic interface. `codex exec --json` is a fallback for genuinely single-shot scripted runs.
@@ -24,7 +24,7 @@ flowchart LR
 | Resume | `codex resume --last` / `codex resume <SESSION_ID>` / `codex exec resume --last` |
 | Fork | `codex fork` (interactive only — for the equivalent in `direct` mode, use `thread/fork` JSON-RPC) |
 | Programmatic | `codex app-server --listen stdio://` |
-| Remote app-server | `codex app-server --listen ws://127.0.0.1:<port>` plus `codex --remote ws://...` or our websocket client |
+| Remote app-server | useful inside the future Yikes remote-server runtime; non-loopback access requires Yikes auth/policy |
 | Codex as MCP server | `codex mcp-server` (we don't use this for v1) |
 
 ### Input
@@ -237,22 +237,22 @@ Then over stdio:
 
 ### Backpressure
 
-Server returns JSON-RPC error code `-32001` "Server overloaded; retry later" when overloaded. The adapter retries with exponential backoff and jitter. Websocket mode also has bounded outbound queues, so the remote-control driver must drain events promptly and reconnect/reconcile state if the transport drops.
+Server returns JSON-RPC error code `-32001` "Server overloaded; retry later" when overloaded. The adapter retries with exponential backoff and jitter. WebSocket mode also has bounded outbound queues, so a future remote-server runtime must drain events promptly and reconnect/reconcile state if the transport drops.
 
 ### Capability negotiation
 
 During `initialize`, set `capabilities.optOutNotificationMethods` to silence noisy event types (e.g. periodic status heartbeats).
 
-## Driving Codex in **remote-control mode**
+## Codex Behind **remote-server**
 
-Remote-control mode uses Codex's app-server websocket transport instead of screen-scraping the TUI:
+Codex can expose app-server over WebSocket, but Yikes should put that behind its own remote-server auth and session API instead of exposing raw backend sockets as the public contract:
 
 ```bash
 codex app-server --listen ws://127.0.0.1:4500
 codex --remote ws://127.0.0.1:4500 --no-alt-screen
 ```
 
-For programmatic yikes control, the remote driver connects directly to the websocket and speaks the same JSON-RPC protocol as direct mode. For human remote attach, it can print or launch a `codex --remote ...` command.
+For programmatic Yikes control, the remote Yikes server owns the Codex app-server connection and emits normalized Yikes events. A client talks to Yikes, not directly to Codex.
 
 Security defaults:
 
@@ -316,5 +316,5 @@ We do **not** disable user-level auto-update for the codex binary itself — the
 - **TUI uses alternate screen by default.** Pass `--no-alt-screen` in tmux mode.
 - **AGENTS.md discovery order:** `AGENTS.override.md` → `AGENTS.md` → fallbacks, root-down concatenation. The adapter doesn't touch this; it's Codex's job.
 - **Approval prompts in TUI** are rendered as a BottomPane modal. We detect them via pyte by looking for the known frame layout in the bottom rows; for `app-server` we get server-initiated request methods such as `item/commandExecution/requestApproval` and answer that exact JSON-RPC request.
-- **Websocket app-server is remote-control, not the default direct path.** Keep stdio as the stable local direct transport; use websocket only when remote attach/control is requested.
+- **WebSocket app-server is a building block for remote-server, not the default direct path.** Keep stdio as the stable local direct transport; use WebSocket only behind an authenticated Yikes server or explicit local development setup.
 - **Rollout files become `.zst`** in recent builds. We don't read them; we just record the session ID and let `codex resume` handle it.

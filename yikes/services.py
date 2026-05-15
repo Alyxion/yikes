@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import tempfile
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 from .capabilities import DriverRegistry, default_driver_registry
 from .commands import (
@@ -28,8 +30,10 @@ class BackendTransport:
             options.driver,
             prompt,
             cwd=options.cwd,
+            cwd_explicit=options.cwd_explicit,
             timeout=options.timeout,
             model=options.model,
+            session_id=options.session_id,
             settings=options.settings,
         )
 
@@ -45,7 +49,7 @@ class Conversation:
 
     def ask(self, text: str) -> str:
         self.messages.append(Message(MessageRole.USER, text))
-        prompt = self.render_prompt()
+        prompt = self.render_interactive_prompt(text) if self._uses_native_session_history() else self.render_prompt()
         answer = self.transport.ask(self.options, prompt).strip()
         self.messages.append(Message(MessageRole.ASSISTANT, answer))
         return answer
@@ -71,8 +75,14 @@ class Conversation:
     def set_settings(self, settings: AgentSettings) -> None:
         self.options = self.options.with_settings(settings)
 
+    def set_options(self, options: ChatOptions) -> None:
+        self.options = options
+
     def set_web_search(self, enabled: bool) -> None:
         self.set_settings(self.options.settings.with_web_search(enabled))
+
+    def set_tmux_enabled(self, enabled: bool) -> None:
+        self.set_settings(self.options.settings.with_tmux(enabled))
 
     def add_read_root(self, path: Path) -> None:
         self.set_settings(self.options.settings.add_read_root(path))
@@ -103,6 +113,7 @@ class Conversation:
             "model": self.options.model or "(default)",
             "complexity": self.options.complexity.value,
             "web": "enabled" if settings.web_search_enabled else "disabled",
+            "tmux": "enabled" if settings.tmux_enabled else "disabled",
             "read_roots": str(len(settings.read_roots)),
             "write_roots": str(len(settings.write_roots)),
             "mcps": str(len(settings.mcp_servers)),
@@ -135,6 +146,14 @@ class Conversation:
             f"{transcript}\nAssistant:"
         )
 
+    def render_interactive_prompt(self, text: str) -> str:
+        return (
+            "You are a concise chatbot. Follow the latest user instruction exactly. "
+            "When asked for a name as a single word, output only that name.\n\n"
+            f"{self._render_settings_prompt()}\n\n"
+            f"{text}"
+        )
+
     def _render_settings_prompt(self) -> str:
         settings = self.options.settings
         read_roots = ", ".join(str(path) for path in settings.read_roots) or "(none configured)"
@@ -144,18 +163,92 @@ class Conversation:
             for server in settings.mcp_servers
         ) or "(none attached)"
         web = "enabled" if settings.web_search_enabled else "disabled"
+        tmux = "enabled" if self.options.driver is Driver.TMUX or settings.tmux_enabled else "disabled"
         return (
             "Runtime configuration:\n"
             f"- Web search: {web}.\n"
+            f"- tmux UI transport: {tmux}.\n"
             f"- Allowed read directories: {read_roots}.\n"
             f"- Allowed write directories: {write_roots}.\n"
             f"- Attached MCP servers: {mcps}.\n"
             "Respect these limits when using tools or suggesting file operations."
         )
 
+    def _uses_native_session_history(self) -> bool:
+        return self.options.driver is Driver.TMUX or (
+            self.options.driver is Driver.DOCKER and self.options.settings.tmux_enabled
+        )
+
+
+@dataclass
+class Session:
+    """Small embeddable facade over a conversation.
+
+    The long-lived async session manager is still a target architecture. This
+    class gives Python callers a stable object to keep in memory today, so a
+    web app can bind one chat session to one browser/editor session without
+    depending on the Textual UI.
+    """
+
+    conversation: Conversation
+    id: str = field(default_factory=lambda: uuid4().hex)
+
+    @property
+    def options(self) -> ChatOptions:
+        return self.conversation.options
+
+    @property
+    def messages(self) -> list[Message]:
+        return self.conversation.messages
+
+    def ask(self, text: str) -> str:
+        return self.conversation.ask(text)
+
+    def prompt(self, text: str) -> str:
+        return self.ask(text)
+
+    def clear(self) -> None:
+        self.conversation.clear()
+
+    def status(self) -> dict[str, str]:
+        return self.conversation.status() | {"session_id": self.id}
+
+    def run_slash_command(self, raw: str) -> CommandResult:
+        return self.conversation.run_slash_command(raw)
+
+    def handle_slash_command(self, raw: str) -> str | None:
+        return self.conversation.handle_slash_command(raw)
+
+    def slash_suggestions(self, raw: str) -> list[CommandSuggestion]:
+        return self.conversation.slash_suggestions(raw)
+
 
 class ChatService:
     """Backend-neutral service usable from CLI, TUI, or a future web API."""
+
+    def create_session(
+        self,
+        backend: Backend | str,
+        driver: Driver | str,
+        *,
+        cwd: Path | None = None,
+        timeout: float = 180.0,
+        model: str | None = None,
+        complexity: Complexity | str = Complexity.MEDIUM,
+        settings: AgentSettings | None = None,
+        transport: ChatTransport | None = None,
+    ) -> Session:
+        conversation = self.create_conversation(
+            backend,
+            driver,
+            cwd=cwd,
+            timeout=timeout,
+            model=model,
+            complexity=complexity,
+            settings=settings,
+            transport=transport,
+        )
+        return Session(conversation)
 
     def create_conversation(
         self,
@@ -169,14 +262,18 @@ class ChatService:
         settings: AgentSettings | None = None,
         transport: ChatTransport | None = None,
     ) -> Conversation:
+        parsed_backend = Backend(backend)
+        parsed_driver = Driver(driver)
+        resolved_settings = settings or AgentSettings()
         options = ChatOptions(
-            backend=Backend(backend),
-            driver=Driver(driver),
-            cwd=cwd or Path.cwd(),
+            backend=parsed_backend,
+            driver=parsed_driver,
+            cwd=_resolve_conversation_cwd(cwd, parsed_driver, resolved_settings),
+            cwd_explicit=cwd is not None,
             timeout=timeout,
             model=model,
             complexity=Complexity(complexity),
-            settings=settings or AgentSettings(),
+            settings=resolved_settings,
         )
         return Conversation(options, transport or BackendTransport(), driver_registry=default_driver_registry())
 
@@ -208,3 +305,13 @@ class ChatService:
             conversation.ask("What is my name? Answer with exactly one word and no punctuation."),
         ]
         return ChatResult(conversation.options.backend, conversation.options.driver, turns)
+
+
+def _resolve_conversation_cwd(cwd: Path | None, driver: Driver, settings: AgentSettings) -> Path:
+    if cwd is not None:
+        return cwd.expanduser()
+    if driver is Driver.TMUX:
+        return Path(tempfile.mkdtemp(prefix="yikes-tmux-"))
+    if driver is Driver.DOCKER and settings.tmux_enabled:
+        return Path.cwd()
+    return Path.cwd()

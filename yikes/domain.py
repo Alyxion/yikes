@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from time import time
+from uuid import uuid4
 
 
 class Backend(StrEnum):
@@ -14,6 +15,7 @@ class Backend(StrEnum):
 class Driver(StrEnum):
     DIRECT = "direct"
     TMUX = "tmux"
+    DOCKER = "docker"
     REMOTE_CONTROL = "remote-control"
 
 
@@ -45,12 +47,16 @@ class McpServer:
 @dataclass(frozen=True)
 class AgentSettings:
     web_search_enabled: bool = True
+    tmux_enabled: bool = False
     read_roots: tuple[Path, ...] = ()
     write_roots: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServer, ...] = ()
 
     def with_web_search(self, enabled: bool) -> "AgentSettings":
         return replace(self, web_search_enabled=enabled)
+
+    def with_tmux(self, enabled: bool) -> "AgentSettings":
+        return replace(self, tmux_enabled=enabled)
 
     def add_read_root(self, path: Path) -> "AgentSettings":
         return replace(self, read_roots=_append_unique_path(self.read_roots, path))
@@ -90,10 +96,12 @@ class ChatOptions:
     backend: Backend
     driver: Driver
     cwd: Path
+    cwd_explicit: bool = True
     timeout: float = 180.0
     model: str | None = None
     complexity: Complexity = Complexity.MEDIUM
     settings: AgentSettings = field(default_factory=AgentSettings)
+    session_id: str = field(default_factory=lambda: uuid4().hex)
 
     def with_model(self, model: str | None) -> "ChatOptions":
         return replace(self, model=model)

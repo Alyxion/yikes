@@ -7,6 +7,7 @@ import sys
 from .capabilities import default_driver_registry
 from .domain import AgentSettings, Backend, Complexity, Driver
 from .services import ChatService, Conversation
+from .session_inventory import SessionInventory, SessionLifecycle
 from .state import AppState, load_app_state, save_app_state
 
 
@@ -14,7 +15,7 @@ def run_tui(
     *,
     backend: Backend | None,
     driver: Driver | None,
-    cwd: Path,
+    cwd: Path | None,
     timeout: float,
     model: str | None,
     complexity: Complexity | None,
@@ -82,6 +83,7 @@ def run_tui(
         def __init__(self) -> None:
             super().__init__()
             self.restart_requested = False
+            self.attach_command: list[str] | None = None
             self.saved_state = load_app_state()
             resolved_backend = backend or self.saved_state.backend
             driver_registry = default_driver_registry()
@@ -110,7 +112,8 @@ def run_tui(
                     yield Static("", id="model-status")
                     yield Static("", id="complexity-status")
                     yield Static("", id="web-status")
-                    yield Static(f"CWD: {cwd}")
+                    yield Static("", id="tmux-status")
+                    yield Static(f"CWD: {self.conversation.options.cwd}")
                     yield Select(
                         [(b.value, b.value) for b in Backend],
                         value=self.conversation.options.backend.value,
@@ -122,6 +125,11 @@ def run_tui(
                         id="driver",
                     )
                     yield Select(
+                        self._model_select_options(),
+                        value=self.conversation.options.model or "default",
+                        id="model",
+                    )
+                    yield Select(
                         [(level.value, level.value) for level in Complexity],
                         value=self.conversation.options.complexity.value,
                         id="complexity",
@@ -131,6 +139,22 @@ def run_tui(
                         value="on" if self.conversation.options.settings.web_search_enabled else "off",
                         id="web",
                     )
+                    yield Select(
+                        [("tmux on", "on"), ("tmux off", "off")],
+                        value="on" if self.conversation.options.settings.tmux_enabled else "off",
+                        id="tmux",
+                    )
+                    yield Button("Refresh Sessions", id="refresh-sessions")
+                    yield Select([("no sessions", "")], value="", id="session-select")
+                    with Horizontal(id="session-actions"):
+                        yield Button("Switch", id="switch-session")
+                        yield Button("Attach", id="attach-session")
+                        yield Button("Close", id="close-session")
+                    with Horizontal(id="session-bulk-actions"):
+                        yield Button("Close Docker", id="close-docker")
+                        yield Button("Close tmux", id="close-tmux")
+                    yield Button("Close All", id="close-all")
+                    yield Static("", id="sessions")
                 with Vertical(id="chat"):
                     yield RichLog(id="log", wrap=True, markup=True, highlight=True)
                     yield Static("", id="suggestions")
@@ -149,6 +173,7 @@ def run_tui(
             self._refresh_controls()
             self._save_state()
             self._hide_suggestions()
+            self._refresh_sessions()
             self.query_one("#prompt", Input).focus()
 
         def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -161,6 +186,20 @@ def run_tui(
             if event.button.id == "send":
                 prompt = self.query_one("#prompt", Input)
                 self._submit(prompt.value)
+            if event.button.id == "refresh-sessions":
+                self._refresh_sessions()
+            if event.button.id == "switch-session":
+                self._switch_selected_session()
+            if event.button.id == "attach-session":
+                self._attach_selected_session()
+            if event.button.id == "close-session":
+                self._close_selected_session()
+            if event.button.id == "close-docker":
+                self._close_sessions(runtime="docker")
+            if event.button.id == "close-tmux":
+                self._close_sessions(runtime="tmux")
+            if event.button.id == "close-all":
+                self._close_sessions(runtime=None)
 
         def on_select_changed(self, event: Select.Changed) -> None:
             log = self.query_one("#log", RichLog)
@@ -175,6 +214,22 @@ def run_tui(
                 self._refresh_controls()
                 self._save_state()
                 log.write(f"[bold green]Yikes:[/bold green] Backend set to {selected.value}. Model reset to default.")
+                return
+            if event.select.id == "model":
+                value = str(event.value)
+                if value == "default":
+                    selected_model = None
+                else:
+                    valid_models = {option.name for option in self.conversation.model_registry.options(self.conversation.options.backend)}
+                    if value not in valid_models:
+                        return
+                    selected_model = value
+                if selected_model == self.conversation.options.model:
+                    return
+                self.conversation.set_model(selected_model)
+                self._refresh_controls()
+                self._save_state()
+                log.write(f"[bold green]Yikes:[/bold green] Model set to {value}.")
                 return
             if event.select.id == "driver":
                 value = str(event.value)
@@ -200,6 +255,19 @@ def run_tui(
                 self._save_state()
                 state = "enabled" if enabled else "disabled"
                 log.write(f"[bold green]Yikes:[/bold green] Web search {state}.")
+                return
+            if event.select.id == "tmux":
+                value = str(event.value)
+                if value not in {"on", "off"}:
+                    return
+                enabled = value == "on"
+                if enabled is self.conversation.options.settings.tmux_enabled:
+                    return
+                self.conversation.set_tmux_enabled(enabled)
+                self._refresh_controls()
+                self._save_state()
+                state = "enabled" if enabled else "disabled"
+                log.write(f"[bold green]Yikes:[/bold green] tmux UI transport {state}.")
                 return
             if event.select.id == "complexity":
                 value = str(event.value)
@@ -255,25 +323,112 @@ def run_tui(
             self.query_one("#model-status", Static).update(f"Model: {options.model or 'default'}")
             self.query_one("#complexity-status", Static).update(f"Complexity: {options.complexity.value}")
             web_state = "on" if options.settings.web_search_enabled else "off"
+            tmux_state = "on" if options.settings.tmux_enabled else "off"
             self.query_one("#web-status", Static).update(f"Web: {web_state}")
+            self.query_one("#tmux-status", Static).update(f"tmux: {tmux_state}")
             backend_select = self.query_one("#backend", Select)
             driver_select = self.query_one("#driver", Select)
+            model_select = self.query_one("#model", Select)
             complexity_select = self.query_one("#complexity", Select)
             web_select = self.query_one("#web", Select)
+            tmux_select = self.query_one("#tmux", Select)
+            model_value = options.model or "default"
             if backend_select.value != options.backend.value:
                 backend_select.value = options.backend.value
+            driver_select.set_options(self._driver_select_options())
             if driver_select.value != options.driver.value:
                 driver_select.value = options.driver.value
+            model_select.set_options(self._model_select_options())
+            if model_select.value != model_value:
+                model_select.value = model_value
             if complexity_select.value != options.complexity.value:
                 complexity_select.value = options.complexity.value
             if web_select.value != web_state:
                 web_select.value = web_state
+            if tmux_select.value != tmux_state:
+                tmux_select.value = tmux_state
 
         def _driver_select_options(self) -> list[tuple[str, str]]:
             return [
                 (option.driver.value, option.driver.value)
                 for option in self.conversation.driver_registry.options(self.conversation.options.backend)
             ]
+
+        def _model_select_options(self) -> list[tuple[str, str]]:
+            options = self.conversation.model_registry.options(self.conversation.options.backend)
+            if not options:
+                return [("default", "default")]
+            return [(option.name, option.name) for option in options]
+
+        def _refresh_sessions(self) -> None:
+            inventory = SessionInventory()
+            sessions = inventory.list()
+            self.query_one("#sessions", Static).update(inventory.format())
+            select = self.query_one("#session-select", Select)
+            select_options = [
+                (f"{session.runtime}/{session.backend} {session.id}", session.id)
+                for session in sessions
+            ] or [("no sessions", "")]
+            current = str(select.value or "")
+            select.set_options(select_options)
+            valid = {str(value) for _label, value in select_options}
+            select.value = current if current in valid else str(select_options[0][1])
+
+        def _selected_session_id(self) -> str:
+            return str(self.query_one("#session-select", Select).value or "")
+
+        def _switch_selected_session(self) -> None:
+            log = self.query_one("#log", RichLog)
+            session_id = self._selected_session_id()
+            if not session_id:
+                log.write("[bold yellow]Yikes:[/bold yellow] No session selected.")
+                return
+            options = SessionLifecycle().switch_options(self.conversation.options, session_id)
+            if options is None:
+                log.write(f"[bold red]Yikes:[/bold red] Session not found: {session_id}")
+                self._refresh_sessions()
+                return
+            self.conversation.set_options(options)
+            self._refresh_controls()
+            self._save_state()
+            log.write(f"[bold green]Yikes:[/bold green] Switched to {options.driver.value}/{options.backend.value} session {session_id}.")
+
+        def _close_selected_session(self) -> None:
+            log = self.query_one("#log", RichLog)
+            session_id = self._selected_session_id()
+            if not session_id:
+                log.write("[bold yellow]Yikes:[/bold yellow] No session selected.")
+                return
+            result = SessionLifecycle().close(session_id)
+            style = "bold green" if result.closed else "bold red"
+            log.write(f"[{style}]Yikes:[/{style}] {result.message}")
+            self._refresh_sessions()
+
+        def _attach_selected_session(self) -> None:
+            log = self.query_one("#log", RichLog)
+            session_id = self._selected_session_id()
+            if not session_id:
+                log.write("[bold yellow]Yikes:[/bold yellow] No session selected.")
+                return
+            command = SessionLifecycle().attach_command(session_id)
+            if command is None:
+                log.write(f"[bold red]Yikes:[/bold red] Session not found or not attachable: {session_id}")
+                self._refresh_sessions()
+                return
+            self.attach_command = command
+            self.exit()
+
+        def _close_sessions(self, *, runtime: str | None) -> None:
+            log = self.query_one("#log", RichLog)
+            results = SessionLifecycle().close_all(runtime=runtime)
+            if not results:
+                target = runtime or "known"
+                log.write(f"[bold yellow]Yikes:[/bold yellow] No matching {target} sessions.")
+                self._refresh_sessions()
+                return
+            closed = sum(1 for result in results if result.closed)
+            log.write(f"[bold green]Yikes:[/bold green] Closed {closed}/{len(results)} sessions.")
+            self._refresh_sessions()
 
         def _save_state(self) -> None:
             save_app_state(AppState.from_options(self.conversation.options))
@@ -307,6 +462,7 @@ def run_tui(
                 self.exit()
                 return
             self._refresh_controls()
+            self._refresh_sessions()
             self._save_state()
 
         @work(thread=True)
@@ -322,5 +478,7 @@ def run_tui(
 
     app = YikesApp()
     app.run()
+    if app.attach_command:
+        os.execvp(app.attach_command[0], app.attach_command)
     if app.restart_requested:
         os.execv(sys.executable, [sys.executable, *sys.argv])

@@ -61,15 +61,7 @@ def default_driver_registry() -> DriverRegistry:
         lambda: [
             DriverOption(Driver.DIRECT, "Run through Claude's prompt/stream API"),
             DriverOption(Driver.TMUX, "Drive the local Claude Code TUI through tmux"),
-            DriverOption(
-                Driver.REMOTE_CONTROL,
-                "Claude native remote-control session",
-                available=False,
-                unavailable_reason=(
-                    "Claude Remote Control is a human remote UI and does not expose a local "
-                    "programmatic turn API for this chat surface."
-                ),
-            ),
+            DriverOption(Driver.DOCKER, "Run Claude Code inside a managed Docker sandbox"),
         ],
     )
     registry.register(
@@ -77,6 +69,7 @@ def default_driver_registry() -> DriverRegistry:
         lambda: [
             DriverOption(Driver.DIRECT, "Run through Codex exec/app-server APIs"),
             DriverOption(Driver.TMUX, "Drive the local Codex TUI through tmux"),
+            DriverOption(Driver.DOCKER, "Run Codex inside a managed Docker sandbox"),
             DriverOption(
                 Driver.REMOTE_CONTROL,
                 "Codex app-server websocket",

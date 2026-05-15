@@ -2,10 +2,10 @@
 
 Two backends are supported in v1: **Claude Code** and **Codex CLI**. Each one has its own native I/O surface and its own quirks; the adapter layer normalises them onto a common engine.
 
-| Backend | Native interactive entry | Native headless entry | Native programmatic entry | Native remote-control entry | Default driver |
+| Backend | Native interactive entry | Native headless entry | Native programmatic entry | Native remote note | Default driver |
 |---|---|---|---|---|---|
-| Claude Code | `claude` (REPL) | `claude -p ... --output-format stream-json` | (same, scripted) | `claude --remote-control [name]` | `direct` for headless, `tmux` for local TUI; remote-control is human remote continuation, not yikes chat transport |
-| Codex | `codex` (Ratatui TUI) | `codex exec ... --json` | `codex app-server` (JSON-RPC) | `codex app-server --listen ws://...` / `codex --remote ws://...` | `direct` (app-server/exec) for structured ops, `tmux` for local TUI; remote-control is explicit remote/session work |
+| Claude Code | `claude` (REPL) | `claude -p ... --output-format stream-json` | (same, scripted) | Claude Remote Control exists, but is a human remote UI, not a Yikes chat transport | `direct` for headless, `tmux` for local TUI; future `remote-server` for OpenHort/web attach |
+| Codex | `codex` (Ratatui TUI) | `codex exec ... --json` | `codex app-server` (JSON-RPC) | Codex websocket is useful behind a Yikes server, not as a standalone UI contract | `direct` (app-server/exec) for structured ops, `tmux` for local TUI; future `remote-server` for OpenHort/web attach |
 
 Read each backend page for details:
 
@@ -26,7 +26,7 @@ flowchart LR
         c5[resume by session id]
         c6[cancel turn]
         c7[snapshot]
-        c8[remote-control session]
+        c8[remote-server attach]
     end
     subgraph claude_only[Claude-only]
         cc1[stream-json schema]

@@ -29,7 +29,7 @@ gantt
     codex app-server adapter      :p4a, after p3c, 4d
     Turn cancellation             :p4b, after p4a, 2d
     section Phase 5
-    remote lifecycle adapters     :p5a, after p4b, 4d
+    remote-server attach          :p5a, after p4b, 4d
     six-slot smoke matrix         :p5b, after p5a, 2d
     section Phase 6
     yikes attach / logs           :p6a, after p5b, 2d
@@ -132,32 +132,35 @@ yikes -b codex run -s <id> "long task"
 yikes -b codex cancel <id>      # uses turn/interrupt
 ```
 
-## Phase 5 — Remote lifecycle + six-slot smoke matrix (≈6 days)
+## Phase 5 — Remote Server + Six-Slot Smoke Matrix (≈6 days)
 
-**Goal:** native remote-control is represented honestly per backend, and every backend/driver test slot remains explicit.
+**Goal:** remote access is represented as a Yikes-owned server/session capability, and every backend/runtime test slot remains explicit.
 
-- `yikes.drivers.remote_control` shared interface and state model.
-- Claude Remote Control adapter: `claude --remote-control [name]`, status parsing, local-process lifecycle, remote metadata. This is lifecycle/status support for Claude's human remote UI, not a yikes prompt/response chat transport.
-- Codex websocket adapter: `codex app-server --listen ws://...`, loopback default, websocket auth requirements for non-loopback, direct JSON-RPC over websocket.
-- `yikes remote` command.
-- Attachment/path validation for remote hosts.
-- Six-slot smoke matrix:
+- `yikes server` local HTTP/WebSocket control plane.
+- Scoped bearer-token auth with hashed-at-rest tokens.
+- Session attach/replay over WebSocket.
+- Remote `spawn`, `list`, `get`, `prompt`, `cancel`, `kill`, `destroy`.
+- OpenHort can connect as a client instead of owning Claude/Codex process control.
+- Claude Remote Control remains out of the chat runtime; if exposed later, it is lifecycle/status only.
+- Current six-slot local/isolation smoke matrix:
   - `claude/direct`
   - `claude/tmux`
-  - `claude/remote-control`
+  - `claude/docker`
   - `codex/direct`
   - `codex/tmux`
-  - `codex/remote-control`
+  - `codex/docker`
+- Remote-server remains a separate attach/control-plane matrix because it can target either backend and runtime.
 
 **Acceptance:**
 
 ```bash
 yikes -b claude -d direct ask "ping"
 yikes -b claude -d tmux run "ping"
-yikes -b claude -d remote-control remote --name smoke     # lifecycle/status; chatbot fallback remains explicit
+yikes -b claude -d docker ask "ping"
 yikes -b codex -d direct ask "ping"
 yikes -b codex -d tmux run "ping"
-yikes -b codex -d remote-control remote --listen 127.0.0.1:0
+yikes -b codex -d docker ask "ping"
+yikes -b codex -d remote-server run --url http://127.0.0.1:8989 "ping"
 ```
 
 ## Phase 6 — Attach, logs, replay, packaging (≈9 days)
@@ -179,7 +182,7 @@ Not in v1, but worth tracking:
 
 - **Web UI / IDE plugin** — the engine's event bus makes a WebSocket bridge trivial.
 - **MCP server face** — expose `yikes.spawn`/`yikes.list`/`yikes.cancel` as MCP tools so the AI can drive itself recursively (carefully).
-- **Multi-machine sessions** — remote-control paths and Codex websocket app-server are preferred. tmux over SSH remains an escape hatch, but we do not expose tmux sockets over the network.
+- **Multi-machine sessions** — remote-server attach is preferred. tmux over SSH remains an escape hatch, but we do not expose tmux sockets over the network.
 - **Recording & playback** — capture the full byte stream as asciinema-style typescript for later replay.
 - **Cost-aware scheduling** — pick the cheapest backend that can handle a task.
 - **Cross-backend routing** — same prompt, two backends, compare results.
@@ -189,7 +192,7 @@ Not in v1, but worth tracking:
 These need a decision before the corresponding phase starts.
 
 ### Q1. Auto driver selection — heuristic or explicit?
-**Recommendation:** heuristic by command (`ask`→`direct`, `run`/`shell`→`tmux`, `spawn`→`tmux`, `remote`→`remote-control`); explicit `--driver` always wins. Do not silently select `remote-control` for normal local work.
+**Recommendation:** heuristic by command (`ask`→`direct`, `run`/`shell`→`tmux`, `spawn`→`tmux`, `remote`→`remote-server`); explicit `--driver` always wins. Do not silently select remote execution for normal local work.
 **Decision needed by:** Phase 1.
 
 ### Q2. Codex app-server vs exec --json — which is the default `direct` for Codex?
@@ -241,14 +244,14 @@ Both Claude Code and Codex change their event schemas and TUI layouts between re
 
 **Decision needed by:** Phase 1 (affects how the direct driver builds env for child processes).
 
-### Q12. What is the remote-control security baseline?
-Remote-control introduces remote endpoints and potentially bearer tokens. The default must not create a network listener that another machine can use without explicit opt-in.
+### Q12. What is the remote-server security baseline?
+Remote-server introduces endpoints and bearer tokens. The default must not create a network listener that another machine can use without explicit opt-in.
 
 **Recommendation:**
 
-- Claude Remote Control uses Claude Code's native outbound service path; yikes stores only metadata and never the user's remote auth material.
-- Codex websocket app-server binds to loopback by default. Non-loopback requires explicit `--remote-bind`, explicit websocket auth mode, and token material passed by file/env, never raw CLI args.
-- Remote-control transcripts redact URLs/tokens and store endpoint labels, not secrets.
+- The Yikes server binds to loopback by default. Non-loopback requires explicit `--remote-bind`, explicit bearer-token auth, and token material passed by file/env, never raw CLI args.
+- Backend-native remote features such as Claude Remote Control or Codex WebSocket are internal implementation options only when explicitly chosen; they are not the public OpenHort/web contract.
+- Remote-server transcripts redact URLs/tokens and store endpoint labels, not secrets.
 - Local file/image attachments are validated against the backend host; if a path is local-only, reject unless a configured transfer hook copies it first.
 
 **Decision needed by:** Phase 5.

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yikes import Backend, ChatService, Complexity, Driver, McpServer
+from yikes import AgentSettings, Backend, ChatService, Complexity, Driver, McpServer
 from yikes.commands import CommandRegistry, CommandSpec, CommandResult, ModelOption, ModelRegistry
+import yikes.commands as commands_module
+from yikes.capabilities import default_driver_registry
 from yikes.domain import ChatOptions
 
 
@@ -17,6 +19,15 @@ class FakeTransport:
         if "What is 4+4?" in prompt:
             return "8"
         return "I am doing well."
+
+
+class CaptureTransport:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def ask(self, options: ChatOptions, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return "OK"
 
 
 def test_chat_service_goal_flow_is_backend_neutral() -> None:
@@ -45,6 +56,64 @@ def test_conversation_keeps_history_for_later_frontends() -> None:
     assert "Assistant: I am doing well." in prompt
 
 
+def test_tmux_conversation_uses_native_session_history_prompt() -> None:
+    transport = CaptureTransport()
+    conversation = ChatService().create_conversation(
+        Backend.CLAUDE,
+        Driver.TMUX,
+        cwd=Path.cwd(),
+        transport=transport,
+    )
+
+    conversation.ask("Say OK only.")
+
+    assert "Say OK only." in transport.prompts[0]
+    assert "Assistant:" not in transport.prompts[0]
+    assert "tmux UI transport: enabled" in transport.prompts[0]
+
+
+def test_session_facade_is_easy_to_embed_from_python() -> None:
+    session = ChatService().create_session(
+        Backend.CLAUDE,
+        Driver.DIRECT,
+        cwd=Path.cwd(),
+        transport=FakeTransport(),
+    )
+
+    answer = session.prompt("Hello, my name is Michael. How are you doing?")
+
+    assert answer == "I am doing well."
+    assert session.id
+    assert session.status()["session_id"] == session.id
+    assert session.status()["messages"] == "2"
+    assert session.messages[0].text.startswith("Hello")
+
+
+def test_local_tmux_without_cwd_gets_random_host_workspace() -> None:
+    conversation = ChatService().create_conversation(
+        Backend.CLAUDE,
+        Driver.TMUX,
+        transport=FakeTransport(),
+    )
+
+    assert conversation.options.cwd_explicit is False
+    assert conversation.options.cwd.exists()
+    assert conversation.options.cwd.name.startswith("yikes-tmux-")
+
+
+def test_docker_tmux_without_cwd_keeps_container_workspace_implicit() -> None:
+    conversation = ChatService().create_conversation(
+        Backend.CLAUDE,
+        Driver.DOCKER,
+        settings=AgentSettings(tmux_enabled=True),
+        transport=FakeTransport(),
+    )
+
+    assert conversation.options.cwd_explicit is False
+    assert conversation.options.cwd == Path.cwd()
+    assert conversation.options.session_id
+
+
 def test_service_preserves_explicit_remote_control_for_integration_slots() -> None:
     conversation = ChatService().create_conversation(
         Backend.CODEX,
@@ -54,6 +123,13 @@ def test_service_preserves_explicit_remote_control_for_integration_slots() -> No
     )
 
     assert conversation.options.driver is Driver.REMOTE_CONTROL
+
+
+def test_claude_remote_control_is_not_registered() -> None:
+    registry = default_driver_registry()
+
+    assert [option.driver for option in registry.options(Backend.CLAUDE)] == [Driver.DIRECT, Driver.TMUX, Driver.DOCKER]
+    assert registry.is_available(Backend.CLAUDE, Driver.REMOTE_CONTROL) is False
 
 
 def test_slash_commands_are_handled_locally() -> None:
@@ -106,7 +182,11 @@ def test_slash_command_suggestions_come_from_registry() -> None:
     assert [suggestion.completion for suggestion in model_suggestions] == ["/model sonnet"]
 
     driver_suggestions = conversation.slash_suggestions("/driver")
-    assert {suggestion.completion for suggestion in driver_suggestions} == {"/driver direct", "/driver tmux"}
+    assert {suggestion.completion for suggestion in driver_suggestions} == {
+        "/driver direct",
+        "/driver tmux",
+        "/driver docker",
+    }
 
     mode_suggestions = conversation.slash_suggestions("/mode t")
     assert [suggestion.completion for suggestion in mode_suggestions] == ["/mode tmux"]
@@ -145,6 +225,41 @@ def test_runtime_settings_are_configurable_through_slash_commands(tmp_path) -> N
     assert conversation.options.settings.mcp_servers == (McpServer("fs", "python", ("-m", "server")),)
     assert conversation.handle_slash_command("/mcp disable fs") == "MCP disabled: fs"
     assert conversation.options.settings.mcp_servers[0].enabled is False
+
+
+def test_session_management_slash_commands_use_lifecycle(monkeypatch, tmp_path) -> None:
+    conversation = ChatService().create_conversation(
+        Backend.CLAUDE,
+        Driver.DIRECT,
+        cwd=Path.cwd(),
+        transport=FakeTransport(),
+    )
+    switched = ChatOptions(Backend.CODEX, Driver.DOCKER, tmp_path)
+
+    class FakeLifecycle:
+        def close(self, session_id: str):
+            return type("Result", (), {"message": f"closed {session_id}"})()
+
+        def close_all(self, *, runtime=None, backend=None):
+            assert runtime == "docker"
+            assert backend is None
+            return [
+                type("Result", (), {"closed": True})(),
+                type("Result", (), {"closed": False})(),
+            ]
+
+        def switch_options(self, current, session_id: str):
+            assert current is conversation.options
+            assert session_id == "abc"
+            return switched
+
+    monkeypatch.setattr(commands_module, "SessionLifecycle", FakeLifecycle)
+
+    assert conversation.handle_slash_command("/close abc") == "closed abc"
+    assert conversation.handle_slash_command("/close-all docker") == "Closed 1/2 sessions."
+    assert conversation.handle_slash_command("/switch abc") == "Switched to docker/codex session abc."
+    assert conversation.options.backend is Backend.CODEX
+    assert conversation.options.driver is Driver.DOCKER
 
 
 def test_command_registry_is_extensible_for_future_frontends() -> None:

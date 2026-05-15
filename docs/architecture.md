@@ -1,6 +1,6 @@
 # Architecture
 
-A layered design where the **engine** owns abstractions and policy, and a small set of pluggable **drivers** and **backend adapters** owns the protocol details.
+A layered design where the **engine/session manager** owns durable state and policy, and a small set of pluggable **runtime drivers** and **backend adapters** owns the protocol details. The terminal UI, CLI, Python library, web backend, and OpenHort are clients of the same manager.
 
 ## Big picture
 
@@ -8,7 +8,10 @@ A layered design where the **engine** owns abstractions and policy, and a small 
 flowchart TB
     subgraph faces[Public faces]
         cli["CLI<br/>(Typer / argparse)"]
+        tui["Terminal UI<br/>(Textual)"]
         pylib["Python library<br/>yikes.Session"]
+        web["Web backend<br/>HTTP / WebSocket"]
+        oh["OpenHort"]
     end
 
     subgraph engine[Engine]
@@ -27,17 +30,20 @@ flowchart TB
     subgraph drivers[Drivers]
         dtmux[tmux driver]
         ddirect[direct subprocess driver]
-        dremote[remote-control driver]
+        dremote[remote server driver]
     end
 
     subgraph proc[Processes]
         ptmux[(tmux server<br/>dedicated socket)]
         pdirect[(claude / codex<br/>subprocess)]
-        premote[(remote-control endpoint<br/>Anthropic API / Codex WS)]
+        premote[(Yikes server<br/>HTTP / WebSocket)]
     end
 
     cli --> ses
+    tui --> ses
     pylib --> ses
+    web --> ses
+    oh --> ses
     ses --> ca
     ses --> coa
     ca --> dtmux
@@ -63,7 +69,7 @@ flowchart TB
     classDef adap fill:#fef,stroke:#969
     classDef drv fill:#efe,stroke:#696
     classDef pr fill:#fee,stroke:#966
-    class cli,pylib face
+    class cli,tui,pylib,web,oh face
     class ses,evbus,tx,snap,emul eng
     class ca,coa adap
     class dtmux,ddirect,dremote drv
@@ -75,14 +81,15 @@ flowchart TB
 ### 1. Public faces (`yikes.cli`, `yikes`)
 
 - **CLI** — Typer-based; mirrors `claude` and `codex` flag surfaces (see [CLI Wrapper](cli-wrapper.md)).
-- **Library** — `yikes.Session(...)` and friends (see [Python Library](python-library.md)).
+- **Library** — `ChatService.create_session(...)` today, later `yikes.Manager` and durable `yikes.Session` (see [Python Library](python-library.md)).
+- **Web/OpenHort clients** — attach to the same manager. They do not own Claude/Codex processes directly.
 - Neither face talks to subprocesses directly. They only invoke the engine.
 
 ### 2. Engine (`yikes.engine`)
 
 Owns the **abstractions** that don't depend on which CLI or driver is in play.
 
-- **Session manager** — creates, resumes, kills sessions; resolves session IDs to running adapters.
+- **Session manager** — creates, resumes, lists, attaches, kills, and destroys sessions; resolves session IDs to running adapters and runtimes. This manager is the durable owner. Frontends can disconnect without killing backend work.
 - **Event bus** — typed pub/sub; subscribers attach `async for` consumers.
 - **Transcript store** — append-only JSONL per session under `~/.yikes/sessions/<id>.jsonl` for replay/inspection. Mirrors the structure of the CLIs' native transcripts but normalises across backends.
 - **Snapshot service** — returns the rendered screen state for a session at any point. Cheap call; backed by the VT emulator's grid (tmux driver), the assembled message buffer (direct driver), or the backend's remote session state when available.
@@ -99,7 +106,7 @@ Each adapter knows:
 
 The adapter is **driver-agnostic** — it delegates I/O to the driver and just speaks its own protocol on top.
 
-### 4. Drivers (`yikes.drivers.direct`, `yikes.drivers.tmux`, `yikes.drivers.remote_control`)
+### 4. Runtime drivers (`yikes.drivers.direct`, `yikes.drivers.tmux`, future `yikes.drivers.remote_server`)
 
 Three implementations of the same internal interface:
 
@@ -115,18 +122,20 @@ class Driver(Protocol):
     async def stop(self) -> None: ...
 ```
 
-The **direct driver** implements this against a plain subprocess or PTY. The **tmux driver** implements it against a managed tmux server on a dedicated socket. The **remote-control driver** implements it against each backend's native remote surface.
+The **direct driver** implements this against a plain subprocess or PTY. The **tmux driver** implements it against a managed tmux server on a dedicated socket. The **docker driver** implements it against a managed Docker sandbox. The **remote-server driver** implements it against a Yikes-owned HTTP/WebSocket control plane with scoped bearer-token auth.
 
-For the `direct` driver, `send_key` is mostly a no-op for `claude -p` (one-shot, doesn't accept input mid-run) but is real for `codex app-server` (where cancellation is a JSON-RPC `turn/interrupt`). For the `remote-control` driver, low-level keystrokes are backend-specific: Claude exposes remote human control via Anthropic's service, while Codex exposes app-server transports such as websocket and `codex --remote`.
+For the `direct` driver, `send_key` is mostly a no-op for `claude -p` (one-shot, doesn't accept input mid-run) but is real for `codex app-server` (where cancellation is a JSON-RPC `turn/interrupt`). For remote access, Yikes should not depend on Claude Remote Control as a chat transport; remote clients attach to a Yikes server session.
 
 ## Mode matrix
 
-These six combinations are first-class test targets:
+The six local/isolation combinations are first-class integration test targets. Remote-server is tested as the authenticated attach/control-plane runtime:
 
-| Backend | `direct` | `tmux` | `remote-control` |
-|---|---|---|---|
-| Claude Code | `claude -p --output-format stream-json`, plus bidirectional stream-json where supported | `claude` in a managed tmux pane | `claude --remote-control [name]` or `/remote-control`, surfaced through claude.ai / mobile; yikes treats this as lifecycle/status until Claude exposes a programmatic turn API |
-| Codex CLI | `codex app-server --listen stdio://` by default, `codex exec --json` for one-shot | `codex --no-alt-screen` in a managed tmux pane | `codex app-server --listen ws://...` plus API/websocket client or `codex --remote ws://...` |
+| Backend | `direct` | `tmux` | `docker` | `remote-server` |
+|---|---|---|---|---|
+| Claude Code | `claude -p --output-format stream-json`, plus bidirectional stream-json where supported | `claude` in a managed tmux pane | `claude` inside a managed Docker sandbox with host MCP proxy URLs | Yikes server owns a Claude session and exposes Yikes events over HTTP/WebSocket |
+| Codex CLI | `codex app-server --listen stdio://` by default, `codex exec --json` for one-shot | `codex --no-alt-screen` in a managed tmux pane | `codex` inside a managed Docker sandbox with host MCP proxy URLs | Yikes server owns Codex app-server/thread state and exposes Yikes events over HTTP/WebSocket |
+
+The current code still has a `remote-control` enum value as an integration-test placeholder and compatibility slot. It is intentionally not available in the interactive chat registry. The target runtime name for OpenHort integration is `remote-server`.
 
 ## Data flow — `tmux` driver
 
@@ -214,7 +223,7 @@ sequenceDiagram
     end
 ```
 
-## Data flow — `remote-control` driver
+## Data flow — remote server attach
 
 ```mermaid
 sequenceDiagram
@@ -222,23 +231,24 @@ sequenceDiagram
     participant lib as yikes.Session
     participant eng as Engine
     participant adp as Adapter
-    participant drv as remote-control driver
-    participant rc as native remote surface
+    participant drv as remote-server driver
+    participant srv as Yikes server
 
-    caller->>lib: spawn(driver="remote-control")
-    lib->>eng: create remote-capable session
-    eng->>adp: choose backend remote surface
-    adp->>drv: start remote session
-    drv->>rc: Claude Remote Control or Codex app-server WS
-    rc-->>drv: status / URL / session id / stream events
-    drv-->>eng: SessionReady + RemoteControlInfo
-    eng-->>lib: events and remote metadata
+    caller->>lib: attach(remote_url, bearer_token)
+    lib->>eng: create remote client session
+    eng->>drv: connect to Yikes server
+    drv->>srv: HTTPS/WebSocket + scoped bearer token
+    srv-->>drv: session metadata + event replay
+    caller->>lib: prompt(...)
+    lib->>eng: send user turn
+    drv->>srv: turn/start
+    srv->>adp: route to Claude or Codex runtime
+    adp-->>srv: normalized events
+    srv-->>drv: live event stream
+    drv-->>eng: StreamDelta / ToolUse / TurnComplete
 ```
 
-Remote-control is not just tmux over SSH. It is a native backend path:
-
-- Claude Code: the local `claude` process makes outbound TLS connections to Anthropic, and remote clients connect through claude.ai or the Claude app.
-- Codex: the app-server can listen on websocket for remote clients. Loopback plus SSH forwarding is the default safe shape; non-loopback listeners require explicit websocket auth.
+Remote server attach is not tmux over SSH and not Claude Remote Control. It is a Yikes-owned control plane. The remote host runs Yikes, owns the backend process and policy, and clients attach through authenticated HTTP/WebSocket APIs.
 
 ## The event model
 
@@ -324,7 +334,7 @@ The terminal app persists the user's last interactive choices in a small JSON st
 
 The default path is `~/.config/yikes/state.json`, with `YIKES_STATE_PATH` available for tests and isolated runs. This state is part of the app shell, not the transcript: restarting yikes restores how the user wants to connect and reason, but it does not silently restore previous chat messages.
 
-Interactive chat drivers are intentionally limited to transports that can service a local prompt/response turn. Remote-control remains a backend/session capability for future lifecycle commands and explicit integration tests, but it is not exposed as an interactive chat mode unless the backend provides a programmatic turn API.
+Interactive chat drivers are intentionally limited to transports that can service a prompt/response turn. Claude Remote Control remains excluded from the interactive registry because it is a human remote UI, not a Yikes programmatic transport. The remote target for OpenHort is a Yikes server session.
 
 ## Concurrency model
 
@@ -384,7 +394,7 @@ flowchart TB
     user["yikes ps"] --> mgr[Manager.list]
     mgr --> tdrv[tmux driver: list-sessions]
     mgr --> ddrv["direct driver: state in ~/.yikes/"]
-    mgr --> rdrv["remote-control driver: native state + ~/.yikes/"]
+    mgr --> rdrv["remote-server driver: endpoint state + ~/.yikes/"]
     tdrv --> merge[merge + sort]
     ddrv --> merge
     rdrv --> merge
@@ -395,8 +405,8 @@ Internally:
 
 - **tmux driver** maintains pane-tagged metadata (`YIKES_BACKEND`, `YIKES_NATIVE_ID`, `YIKES_MODEL`) per session, queried via `tmux list-sessions -F '...'`.
 - **direct driver** (long-lived `codex app-server`) tracks its sessions in `~/.yikes/state/`.
-- **remote-control driver** stores endpoint metadata (`remote_url`, `environment_id`, websocket endpoint, auth mode) in `~/.yikes/state/`, but never stores bearer tokens in transcripts.
-- The Manager unions both and returns a single sorted list.
+- **remote-server driver** stores endpoint metadata (`remote_url`, environment/session labels, websocket endpoint, auth mode) in `~/.yikes/state/`, but never stores bearer tokens in transcripts.
+- The Manager unions all runtime sources and returns a single sorted list.
 
 This is what makes "for the user it shall not make a major difference" real: they pick a backend and a mode, and the session ops above behave the same way regardless.
 
@@ -414,6 +424,6 @@ We **co-locate** our normalised view at `~/.yikes/sessions/<our-id>.jsonl`, with
 These need user input before implementation; they're tracked in [Roadmap](roadmap.md#open-questions).
 
 1. **Codex `app-server` framing** — newline-delimited JSON without the `"jsonrpc":"2.0"` header on the wire. We should generate types via `codex app-server generate-ts` and check the schema in, rather than hand-rolling.
-2. **Driver auto-selection** — should the engine pick `direct`, `tmux`, or `remote-control` automatically based on the operation, or require explicit user choice? Recommendation: `direct` for one-shot structured work, `tmux` for local TUI/human attach, `remote-control` only when explicitly requested.
+2. **Runtime auto-selection** — should the engine pick `direct`, `tmux`, `docker`, or `remote-server` automatically based on the operation, or require explicit user choice? Recommendation: `direct` for one-shot structured work, `tmux` for local TUI/human attach, `docker` for isolated work, `remote-server` only when explicitly requested or when connecting to a configured server.
 3. **Cross-backend `Session` lifetime** — Claude Code's native resume vs Codex's `thread/resume` — do we map them to one `Session.resume(id)`? Recommendation: yes, with a per-backend ID format and a thin adapter.
 4. **Approval handling defaults** — auto-approve `Read`-only tools? Or always defer to the caller? Recommendation: defer; offer a policy hook.

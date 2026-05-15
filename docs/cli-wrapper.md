@@ -2,7 +2,7 @@
 
 The CLI is a thin shell over the Python library. It must hit two notes:
 
-1. **From a user's perspective**, the main choices are **provider** (Claude or Codex) and **mode**. For the interactive chatbot, mode is `direct` or `tmux`; `remote-control` is reserved for explicit native remote/session commands and integration test slots.
+1. **From a user's perspective**, the main choices are **provider** (Claude or Codex), runtime/mode, and whether a TUI transport is needed. For the interactive chatbot, mode is `direct`, `tmux`, or `docker`; Docker can also enable tmux inside the container; remote work uses a Yikes-owned `remote-server` session.
 2. **For session management** (spawn, kill, list, killall, attach), the command surface is uniform across both backends — same flags, same output, same exit codes.
 
 Native `claude` / `codex` flags are still accepted (we proxy them through), but you rarely need to set them.
@@ -18,11 +18,12 @@ Global options:
 | Flag | Description | Default |
 |---|---|---|
 | `-b`, `--backend {claude,codex}` | Which CLI to drive. | `claude` |
-| `-d`, `--driver {direct,tmux,remote-control,auto}` | How to drive it. Interactive chat accepts `direct`/`tmux`; `remote-control` is for explicit remote/session commands. | `auto` |
+| `-d`, `--driver {direct,tmux,docker,remote-server,auto}` | How to drive it. Interactive chat accepts `direct`/`tmux`/`docker`; `remote-server` is for authenticated remote Yikes sessions. | `auto` |
 | `-s`, `--session NAME_OR_ID` | Operate on a specific session. | (new) |
 | `--socket PATH_OR_NAME` | tmux socket path/name, only for `tmux`. | `~/.yikes/tmux/default.sock` |
-| `--remote ADDR_OR_NAME` | Remote-control endpoint/name, only for `remote-control`. | backend default |
-| `--cwd PATH` | Working dir for spawned sessions. | `$PWD` |
+| `--remote ADDR_OR_NAME` | Remote Yikes server endpoint/name, only for `remote-server`. | configured server |
+| `--cwd PATH` | Working dir for spawned sessions. If omitted for tmux-backed sessions, Yikes creates a random workspace where the session starts. | generated for tmux, `$PWD` otherwise |
+| `--tmux / --no-tmux` | For Docker mode, start the backend in tmux inside the container so it can be overtaken later. | off |
 | `--web-search / --no-web-search` | Enable or disable web search for the agent config. | enabled |
 | `--read-dir PATH` | Add a directory the agent may read. Repeatable. | none |
 | `--write-dir PATH` | Add a directory the agent may write. Repeatable. | none |
@@ -66,8 +67,14 @@ The current package implements:
 
 - `yikes` / `yikes tui`: a Textual chatbot control surface, default when no arguments are passed.
 - `yikes chat-smoke`: an end-to-end chatbot smoke flow across backend/driver combinations.
-- Shared slash-command registry with autocomplete for `/model`, `/models`, `/backend`, `/driver`, `/mode`, `/complexity`, `/web`, `/dirs`, `/mcp`, `/restart`, and `/exit`.
+- `yikes sessions`: lists known Yikes sessions across durable tmux/remote metadata and Docker sandboxes.
+- `yikes close <id>`: closes one known session. Docker sessions are destroyed; tmux sessions are killed when socket metadata is available; durable metadata is removed.
+- `yikes close-all --runtime docker|tmux|remote-server|all --backend claude|codex|all`: closes matching sessions in bulk.
+- `yikes attach <id> [--print-only]`: overtakes attachable local tmux and Docker+tmux sessions. Docker attach uses `docker exec -it <container> tmux ...`.
+- `yikes token` / `yikes server`: creates hashed bearer tokens and starts the Yikes WebSocket control plane.
+- Shared slash-command registry with autocomplete for `/model`, `/models`, `/backend`, `/driver`, `/mode`, `/sessions`, `/switch`, `/close`, `/close-all`, `/complexity`, `/web`, `/dirs`, `/mcp`, `/restart`, and `/exit`.
 - Persisted app state in `~/.config/yikes/state.json` covering backend, chat mode, model, complexity, web search, read/write directories, and MCP servers.
+- The Textual UI exposes backend, mode, tmux on/off, model, complexity, web-search, session inventory, switch, attach, close, close Docker, close tmux, and close all controls in the left panel.
 
 The command set below is still the larger target CLI design.
 
@@ -112,18 +119,19 @@ yikes -b codex shell
 
 This effectively does `yikes spawn` + `yikes attach`. Detaches cleanly on `Ctrl+B D` (tmux's standard detach key).
 
-### `yikes remote` — native remote-control session
+### `yikes remote` — remote Yikes server session
 
 ```bash
-yikes remote                         # Claude Remote Control by default
-yikes -b codex remote --listen 127.0.0.1:4500
-yikes remote --name release-prep
+yikes server --listen 127.0.0.1:8989
+yikes remote --url http://127.0.0.1:8989 --session release-prep
+yikes -b codex remote --url http://127.0.0.1:8989
 ```
 
-- Default driver: `remote-control`.
-- Claude maps to `claude --remote-control [name]`.
-- Codex maps to `codex app-server --listen ws://...` plus either a websocket yikes client or a printed `codex --remote ws://...` attach command.
-- Remote-control sessions are listed in `yikes ps` like any other session.
+- Default driver: `remote-server`.
+- The remote host runs Yikes and owns Claude/Codex process lifecycle.
+- Clients authenticate with scoped bearer tokens.
+- Remote sessions are listed in `yikes ps` like any other session.
+- Claude Remote Control is not used for this chat transport; it is a Claude human remote UI.
 
 ### `yikes spawn` — create a session, don't attach
 
@@ -166,16 +174,17 @@ yikes killall                      # kills all sessions on our socket
 yikes killall --dry-run            # show what would die
 ```
 
-Convenience wrapper around the active drivers: tmux `kill-server` for our socket path, direct subprocess shutdown, remote-control endpoint shutdown where supported, plus cleanup of our state directory.
+Convenience wrapper around the active drivers: tmux `kill-server` for our socket path, direct subprocess shutdown, remote-server detach/stop where supported, plus cleanup of our state directory.
 
 ### `yikes attach` — open a session in the user's terminal
 
 ```bash
 yikes attach yik_3f9a
-# (drops into tmux for local TUI sessions, or prints native remote attach info for remote-control sessions)
+# local tmux: drops into tmux
+# Docker+tmux: docker exec -it <container> tmux -S /workspace/yikes-tmux.sock attach -t <session>
 ```
 
-Prints the tmux or native remote attach command if invoked with `--print-only` (for embedding in IDE integrations).
+Prints the tmux attach command or remote-server attach metadata if invoked with `--print-only` (for embedding in IDE integrations).
 
 ### `yikes logs` — replay or tail a session's events
 
@@ -206,7 +215,7 @@ Unknown flags are passed through verbatim to the underlying CLI. We just wrap th
 | Approval policy | Ask interactively if running on a TTY; auto-fail if running headless |
 | Transcript persistence | On, at `~/.yikes/sessions/` |
 | Native session persistence | On (we don't pass `--no-session-persistence` / `--ephemeral`) |
-| Driver | `auto` — `direct` for `ask` and passthrough `-p`/`exec`, `tmux` for local `run`/`shell`/`spawn`, `remote-control` for `remote` |
+| Driver | `auto` — `direct` for `ask` and passthrough `-p`/`exec`, `tmux` for local `run`/`shell`/`spawn`, `remote-server` for `remote` |
 | Frame sync | On |
 | Coalesce window | 80 ms |
 
@@ -217,7 +226,7 @@ Unknown flags are passed through verbatim to the underlying CLI. We just wrap th
 | `ask` | yes, ephemeral | yes | no (rejects approval) | `direct` |
 | `run` | yes (or use `-s`) | yes | yes (approvals) | `tmux` |
 | `shell` | yes (or `-s`) | yes (visible TUI) | full TUI | `tmux` |
-| `remote` | yes (or use `-s`) | backend-dependent | remote UI / websocket | `remote-control` |
+| `remote` | yes (or use `-s`) | yes | remote Yikes API | `remote-server` |
 | `spawn` | yes | no (just prints ID) | no | `tmux` |
 | `ps` | no | no | no | n/a |
 | `kill` | no | no | no | n/a |
@@ -270,7 +279,7 @@ ANSI-stripped text-only output (like the assistant's response, no chrome). Maps 
 | `5` | Backend binary not found |
 | `6` | tmux unavailable (with `--driver tmux`) |
 | `7` | Session not found |
-| `8` | Remote-control unavailable or refused |
+| `8` | Remote server unavailable or refused |
 
 `yikes ask --json` and `yikes run --json` exit `0` if the event stream completes cleanly, regardless of whether the assistant said "I don't know." Failure means an *infrastructure* failure.
 
@@ -304,7 +313,7 @@ git diff main | yikes ask --json \
 |---|---|---|---|
 | One-shot | `yikes ask "..."` | `claude -p "..." --output-format stream-json` | `codex exec "..." --json` |
 | Long session | `yikes spawn` + `yikes run -s id "..."` | TUI inside tmux, send-keys | TUI inside tmux **or** `app-server` |
-| Native remote | `yikes remote` | `claude --remote-control [name]` | `codex app-server --listen ws://...` / `codex --remote ws://...` |
+| Remote server | `yikes remote` | Yikes server owns Claude session | Yikes server owns Codex session |
 | Resume | `yikes spawn --resume <id>` | `claude --resume <id>` | `codex resume <id>` |
 | List sessions | `yikes ps` | (none natively) | `thread/list` via app-server |
 | Kill one | `yikes kill <id>` | (none natively) | (kill app-server thread) |
@@ -323,13 +332,13 @@ Note where the native CLI has no equivalent — those rows are why this wrapper 
 
 ## Six-mode test matrix
 
-Every release must run a smoke test for all six backend/driver combinations:
+Every release must run a smoke test for all six backend/runtime combinations:
 
 | Backend | Driver | Smoke command |
 |---|---|---|
 | Claude | `direct` | `yikes -b claude -d direct ask "ping"` |
 | Claude | `tmux` | `yikes -b claude -d tmux run "ping"` |
-| Claude | `remote-control` | `yikes -b claude -d remote-control remote --name smoke` |
+| Claude | `remote-server` | `yikes -b claude -d remote-server remote --url http://127.0.0.1:8989` |
 | Codex | `direct` | `yikes -b codex -d direct ask "ping"` |
 | Codex | `tmux` | `yikes -b codex -d tmux run "ping"` |
-| Codex | `remote-control` | `yikes -b codex -d remote-control remote --listen 127.0.0.1:0` |
+| Codex | `remote-server` | `yikes -b codex -d remote-server remote --url http://127.0.0.1:8989` |

@@ -7,6 +7,7 @@ from typing import Callable, Iterable, TYPE_CHECKING
 
 from .capabilities import DriverRegistry
 from .domain import Backend, Complexity, Driver, McpServer
+from .session_inventory import SessionInventory, SessionLifecycle
 
 if TYPE_CHECKING:  # pragma: no cover
     from .services import Conversation
@@ -247,6 +248,44 @@ def default_command_registry() -> CommandRegistry:
         status = context.conversation.status()
         return CommandResult(" | ".join(f"{key}: {value}" for key, value in status.items()))
 
+    def sessions_command(_context: CommandContext, _arg: str) -> CommandResult:
+        return CommandResult(SessionInventory().format())
+
+    def close_command(_context: CommandContext, arg: str) -> CommandResult:
+        session_id = arg.strip()
+        if not session_id:
+            return CommandResult("Usage: /close <session-id>")
+        return CommandResult(SessionLifecycle().close(session_id).message)
+
+    def close_all_command(_context: CommandContext, arg: str) -> CommandResult:
+        parts = _split_args(arg)
+        runtime = parts[0].lower() if parts else None
+        results = SessionLifecycle().close_all(runtime=runtime)
+        if not results:
+            target = runtime or "sessions"
+            return CommandResult(f"No matching {target} sessions.")
+        closed = sum(1 for result in results if result.closed)
+        return CommandResult(f"Closed {closed}/{len(results)} sessions.")
+
+    def switch_command(context: CommandContext, arg: str) -> CommandResult:
+        session_id = arg.strip()
+        if not session_id:
+            return CommandResult("Usage: /switch <session-id>")
+        options = SessionLifecycle().switch_options(context.conversation.options, session_id)
+        if options is None:
+            return CommandResult(f"Session not found: {session_id}")
+        context.conversation.set_options(options)
+        return CommandResult(f"Switched to {options.driver.value}/{options.backend.value} session {session_id}.")
+
+    def attach_command(_context: CommandContext, arg: str) -> CommandResult:
+        session_id = arg.strip()
+        if not session_id:
+            return CommandResult("Usage: /attach <session-id>")
+        command = SessionLifecycle().attach_command(session_id)
+        if command is None:
+            return CommandResult(f"Session not found or not attachable: {session_id}")
+        return CommandResult("Attach command: " + shlex.join(command))
+
     def backend_command(context: CommandContext, arg: str) -> CommandResult:
         if not arg:
             return CommandResult(f"Backend: {context.conversation.options.backend.value}")
@@ -304,6 +343,19 @@ def default_command_registry() -> CommandRegistry:
             context.conversation.set_web_search(False)
             return CommandResult("Web search disabled.")
         return CommandResult("Usage: /web [on|off]")
+
+    def tmux_command(context: CommandContext, arg: str) -> CommandResult:
+        normalized = arg.lower()
+        if not normalized:
+            state = "enabled" if context.conversation.options.settings.tmux_enabled else "disabled"
+            return CommandResult(f"tmux UI transport: {state}.")
+        if normalized in {"on", "enable", "enabled", "true", "yes"}:
+            context.conversation.set_tmux_enabled(True)
+            return CommandResult("tmux UI transport enabled.")
+        if normalized in {"off", "disable", "disabled", "false", "no"}:
+            context.conversation.set_tmux_enabled(False)
+            return CommandResult("tmux UI transport disabled.")
+        return CommandResult("Usage: /tmux [on|off]")
 
     def dirs_command(context: CommandContext, arg: str) -> CommandResult:
         parts = _split_args(arg)
@@ -418,6 +470,14 @@ def default_command_registry() -> CommandRegistry:
         ]
         return [option for option in options if not normalized or option.value.startswith(normalized)]
 
+    def tmux_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+        normalized = prefix.lower()
+        options = [
+            CommandSuggestion("on", "Enable real interactive tmux transport", "/tmux on"),
+            CommandSuggestion("off", "Disable tmux transport", "/tmux off"),
+        ]
+        return [option for option in options if not normalized or option.value.startswith(normalized)]
+
     def dirs_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
         normalized = prefix.lower()
         options = [
@@ -441,6 +501,40 @@ def default_command_registry() -> CommandRegistry:
         ]
         return [option for option in options if not normalized or option.value.startswith(normalized)]
 
+    def session_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+        normalized = prefix.lower()
+        return [
+            CommandSuggestion(
+                value=session.id,
+                description=f"{session.runtime}/{session.backend} {session.state}",
+                completion=f"/switch {session.id}",
+            )
+            for session in SessionInventory().list()
+            if not normalized or session.id.lower().startswith(normalized)
+        ]
+
+    def close_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+        normalized = prefix.lower()
+        return [
+            CommandSuggestion(
+                value=session.id,
+                description=f"Close {session.runtime}/{session.backend}",
+                completion=f"/close {session.id}",
+            )
+            for session in SessionInventory().list()
+            if not normalized or session.id.lower().startswith(normalized)
+        ]
+
+    def close_all_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+        normalized = prefix.lower()
+        options = [
+            CommandSuggestion("docker", "Close all Docker sessions", "/close-all docker"),
+            CommandSuggestion("tmux", "Close all tmux sessions", "/close-all tmux"),
+            CommandSuggestion("remote-server", "Close all remote-server sessions", "/close-all remote-server"),
+            CommandSuggestion("all", "Close all known sessions", "/close-all all"),
+        ]
+        return [option for option in options if not normalized or option.value.startswith(normalized)]
+
     registry.register(CommandSpec("help", "Show available commands", help_command, aliases=("?",)))
     registry.register(CommandSpec("clear", "Clear this conversation", clear_command))
     registry.register(
@@ -461,6 +555,43 @@ def default_command_registry() -> CommandRegistry:
         )
     )
     registry.register(CommandSpec("status", "Show backend, driver, model, cwd, and message count", status_command))
+    registry.register(CommandSpec("sessions", "List known Yikes tmux, Docker, and remote sessions", sessions_command, aliases=("ps",)))
+    registry.register(
+        CommandSpec(
+            "switch",
+            "Switch active context to a known session",
+            switch_command,
+            usage="<session-id>",
+            argument_suggestions=session_suggestions,
+        )
+    )
+    registry.register(
+        CommandSpec(
+            "attach",
+            "Show command to overtake/attach to a session",
+            attach_command,
+            usage="<session-id>",
+            argument_suggestions=session_suggestions,
+        )
+    )
+    registry.register(
+        CommandSpec(
+            "close",
+            "Close one known session",
+            close_command,
+            usage="<session-id>",
+            argument_suggestions=close_suggestions,
+        )
+    )
+    registry.register(
+        CommandSpec(
+            "close-all",
+            "Close sessions by runtime",
+            close_all_command,
+            usage="[docker|tmux|remote-server|all]",
+            argument_suggestions=close_all_suggestions,
+        )
+    )
     registry.register(
         CommandSpec(
             "backend",
@@ -504,6 +635,15 @@ def default_command_registry() -> CommandRegistry:
             web_command,
             usage="[on|off]",
             argument_suggestions=web_suggestions,
+        )
+    )
+    registry.register(
+        CommandSpec(
+            "tmux",
+            "Enable, disable, or show tmux UI transport",
+            tmux_command,
+            usage="[on|off]",
+            argument_suggestions=tmux_suggestions,
         )
     )
     registry.register(

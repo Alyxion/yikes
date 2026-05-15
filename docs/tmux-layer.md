@@ -1,6 +1,10 @@
 # tmux Layer
 
-The tmux driver is what makes "run claude/codex via tmux" real. It owns the lifecycle of a managed tmux server, the panes that host AI sessions, and the byte stream that flows out of them.
+The tmux layer is what makes "run Claude/Codex as a real interactive TUI and overtake it later" possible. It owns the lifecycle of a managed tmux server, the panes that host AI sessions, and the byte stream that flows out of them.
+
+tmux is a transport, not a replacement for the runtime. A local `driver=tmux` session starts `claude` or `codex` in a host tmux pane. A Docker session with `tmux_enabled=True` starts `claude` or `codex` inside tmux in the container and is overtaken with `docker exec -it <container> tmux -S <socket> attach -t <session>`.
+
+The tmux transport must never use headless commands. In tmux, Claude starts as `claude ...`; Codex starts as `codex --no-alt-screen ...`. `claude -p`, `codex exec`, and other one-shot paths belong only to the `direct` runtime.
 
 ## Design principles
 
@@ -45,6 +49,40 @@ flowchart TB
 - One `tmux -C attach -t <session-id>` subprocess is opened per pane/session that needs live streaming. A single control client does **not** multiplex output from inactive sessions; it only emits `%output` for the session it is currently attached to.
 - `libtmux` issues commands (low frequency, synchronous request/response).
 - Each pane gets its own pyte `Screen` in our process; pyte's `dirty` set drives our `LineRevised` events.
+
+## Workspaces
+
+When the caller passes an explicit `cwd`, tmux starts there and Yikes does not auto-confirm trust prompts. A user can attach and approve or deny with the native CLI.
+
+When no `cwd` is passed, tmux-backed sessions receive a generated workspace:
+
+- local tmux: a random host directory such as `/tmp/yikes-tmux-*`
+- Docker+tmux: a random container directory such as `/workspace/session-<id>`
+
+Generated workspaces are intentionally empty Yikes-owned roots, so the startup trust prompt can be confirmed automatically. This avoids accidentally treating the caller's current host directory as trusted. Docker+tmux does not mount the host cwd in this case.
+
+## Overtake / Attach
+
+Every tmux-backed session records enough metadata to produce an attach command:
+
+```bash
+yikes sessions
+yikes attach <session-id> --print-only
+```
+
+Local tmux attach looks like:
+
+```bash
+tmux -S /path/to/yikes.sock attach -t yikes-claude-...
+```
+
+Docker+tmux attach looks like:
+
+```bash
+docker exec -it yksb-... tmux -S /workspace/yikes-tmux.sock attach -t yikes-codex
+```
+
+This is the "real overtake" path: the human terminal attaches to the same pane that Yikes created. The CLI process may crash or exit; the tmux session and Docker container can continue running until explicitly closed.
 
 ## Lifecycle
 
@@ -114,7 +152,7 @@ tmux -S ~/.yikes/tmux/default.sock -f /dev/null new-session -d -s ai_$$ -x 200 -
     -e LANG=en_US.UTF-8 \
     -e LC_CTYPE=en_US.UTF-8 \
     -c "$PWD" \
-    "claude"
+    "claude --permission-mode dontAsk"
 
 tmux -S ~/.yikes/tmux/default.sock set -g default-terminal "tmux-256color"
 tmux -S ~/.yikes/tmux/default.sock set -g status off
@@ -163,6 +201,8 @@ async def send_text(self, pane, text, *, bracketed_paste=False):
 `-p` wraps the paste in bracketed-paste markers (`ESC[200~ ... ESC[201~`). Claude Code, Codex, and any modern TUI prompt treat that as raw content, not as submission.
 
 `-d` deletes the buffer after pasting (avoid leaking secrets in tmux's buffer list).
+
+After pasting, Yikes submits with `C-m`. In Codex's multi-line composer, a plain named `Enter` can leave the draft in the input box; `C-m` has been verified against the real TUI.
 
 ### Timing
 
