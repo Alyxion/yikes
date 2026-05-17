@@ -111,6 +111,10 @@ class WebTerminalSession:
             self._set_winsize(self._master_fd, rows, cols)
         except OSError:
             pass
+        try:
+            os.killpg(os.getpgid(self._process.pid), signal.SIGWINCH)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
 
     def close(self) -> None:
         try:

@@ -143,6 +143,8 @@ The terminal UI has two output views:
 - `/view extracted` keeps the normal clean assistant answer view.
 - `/view full` shows the captured tmux screen where yikes! can resolve the backing session, including the prompt, backend UI text, and result markers.
 
+Managed answer capture is enabled by default for tmux chat turns, but it is a session setting rather than a requirement. Use `/capture off`, `yikes tui --no-capture`, or the new-session chooser's Capture field to create a raw interactive session where yikes! pastes only the user's input and leaves the native terminal UI unwrapped.
+
 For interactive prompts, yikes! exposes both small controls and full overtake:
 
 - `/key Up`, `/key Down`, `/key Enter`, `/key Escape`, or similar sends one tmux key to the selected session.

@@ -1,3 +1,13 @@
+from .activity import (
+    ACTIVITY_AWAITING_SELECTION,
+    ACTIVITY_IDLE,
+    ACTIVITY_STREAMING,
+    ACTIVITY_THINKING,
+    ACTIVITY_UNKNOWN,
+    ActivityMonitor,
+    TerminalActivity,
+    classify_terminal_snapshot,
+)
 from .chatbot import Backend, ChatResult, Chatbot, Driver, run_goal_flow
 from .commands import CommandRegistry, CommandSuggestion, ModelRegistry
 from .domain import AgentSettings, ChatOptions, Complexity, ImageAttachment, McpServer, Message, MessageRole
@@ -43,13 +53,19 @@ from .runtime import (
 )
 from .sandbox import DEFAULT_SERVER_COMMAND, SandboxConfig, SandboxManager, SandboxSession
 from .services import ChatService, Conversation, Session
-from .session_inventory import CloseResult, SessionInventory, SessionLifecycle, SessionSummary
+from .session_inventory import CloseResult, SessionInventory, SessionLifecycle, SessionSummary, TmuxSessionController, TmuxStartResult
 from .tokens import TokenStore
 
 __all__ = [
     "Backend",
     "BackendUnavailable",
     "AgentSettings",
+    "ACTIVITY_AWAITING_SELECTION",
+    "ACTIVITY_IDLE",
+    "ACTIVITY_STREAMING",
+    "ACTIVITY_THINKING",
+    "ACTIVITY_UNKNOWN",
+    "ActivityMonitor",
     "ChatResult",
     "ChatOptions",
     "Chatbot",
@@ -102,9 +118,13 @@ __all__ = [
     "StaticCredentialProvider",
     "ToolFilter",
     "TokenStore",
+    "TmuxSessionController",
+    "TmuxStartResult",
+    "TerminalActivity",
     "YikesError",
     "YikesRemoteServer",
     "build_claude_mcp_json",
+    "classify_terminal_snapshot",
     "compute_disallowed_tools",
     "filter_tools_list",
     "parse_inline_mcp",

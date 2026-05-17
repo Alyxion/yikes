@@ -12,6 +12,7 @@ from uuid import uuid4
 CONTAINER_PREFIX = "yksb"
 VOLUME_PREFIX = "ykvol"
 DEFAULT_IMAGE = "yikes-sandbox:latest"
+SANDBOX_IMAGE_VERSION = "2026-05-17-py314-bwrap"
 DEFAULT_SANDBOX_STORE = Path.home() / ".yikes" / "sandboxes"
 DEFAULT_DOCKERFILE = Path(__file__).resolve().parent.parent / "docker" / "yikes-sandbox.Dockerfile"
 DEFAULT_SERVER_COMMAND = (
@@ -160,13 +161,18 @@ class SandboxSession:
     def write_file(self, path: str, content: str | bytes) -> None:
         self._ensure_running()
         data = content.encode() if isinstance(content, str) else content
-        subprocess.run(
-            ["docker", "exec", "-i", self.container_name, "sh", "-c", f"cat > {shlex.quote(path)}"],
+        target = shlex.quote(path)
+        parent = shlex.quote(str(Path(path).parent))
+        result = subprocess.run(
+            ["docker", "exec", "-i", self.container_name, "sh", "-c", f"mkdir -p {parent} && cat > {target}"],
             input=data,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or b"").decode(errors="replace").strip()
+            raise RuntimeError(f"Failed to write {path} in Docker container {self.container_name}: {detail}".strip())
         self._touch()
 
     def _ensure_running(self) -> None:
@@ -297,12 +303,12 @@ def _now() -> str:
 
 def ensure_image(image: str) -> None:
     inspect = subprocess.run(
-        ["docker", "image", "inspect", image],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        ["docker", "image", "inspect", "-f", '{{ index .Config.Labels "yikes.sandbox.version" }}', image],
+        capture_output=True,
+        text=True,
         check=False,
     )
-    if inspect.returncode == 0:
+    if inspect.returncode == 0 and (image != DEFAULT_IMAGE or inspect.stdout.strip() == SANDBOX_IMAGE_VERSION):
         return
     if image != DEFAULT_IMAGE:
         raise RuntimeError(

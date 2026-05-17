@@ -5,18 +5,32 @@ const state = {
   fit: null,
   termWs: null,
   termTerminalId: "",
+  termSessionId: "",
   terminalMode: false,
   terminalExclusive: false,
   pendingTerminalOpen: null,
   retriedTerminalOpen: false,
+  returnSessionId: "",
   dirRoot: "",
   suggestions: [],
   selectedSuggestion: -1,
+  renderedOutputKey: "",
+  renderedOutputText: "",
+  renderedOutputSession: "",
+  renderedOutputView: "",
+  renderedLayoutKey: "",
+  renderedWizardKey: "",
+  lastErrorMessage: "",
+  lastErrorAt: 0,
+  fitPending: false,
+  creatingSession: false,
 };
 
 const els = {
   status: document.getElementById("status"),
+  activityPill: document.getElementById("activity-pill"),
   tabs: document.getElementById("tabs"),
+  viewToggle: document.getElementById("view-toggle"),
   terminal: document.getElementById("terminal"),
   terminalModeBar: document.getElementById("terminal-mode-bar"),
   termReturn: document.getElementById("term-return"),
@@ -57,6 +71,10 @@ function connectDevReload() {
     if (message.type === "reload") location.reload();
   };
 }
+
+setInterval(() => {
+  if (state.app?.has_active_session && !state.terminalMode) send("state");
+}, 650);
 
 function send(type, payload = {}) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
@@ -115,12 +133,62 @@ function setupTerminal() {
     if (state.termWs && state.termWs.readyState === WebSocket.OPEN) {
       state.termWs.send(JSON.stringify({ type: "resize", cols, rows }));
     }
+    if (state.terminalMode && state.termSessionId) {
+      send("term.resize", { session_id: state.termSessionId, cols, rows });
+    }
   });
-  window.addEventListener("resize", debounce(() => state.fit.fit(), 180));
+  window.addEventListener("resize", debounce(fitAfterWindowResize, 120));
+}
+
+function fitTerminalSoon() {
+  if (!state.term || !state.fit || state.fitPending) return;
+  state.fitPending = true;
+  requestAnimationFrame(() => {
+    state.fitPending = false;
+    state.fit.fit();
+  });
+}
+
+function fitAfterWindowResize() {
+  if (!state.term || !state.fit) return;
+  if (state.terminalMode) {
+    resizeActiveTerminal();
+    setTimeout(resizeActiveTerminal, 120);
+    return;
+  }
+  state.fit.fit();
+}
+
+function resizeActiveTerminalRepeatedly() {
+  resizeActiveTerminal();
+  setTimeout(resizeActiveTerminal, 60);
+  setTimeout(resizeActiveTerminal, 160);
+  setTimeout(resizeActiveTerminal, 360);
+  setTimeout(resizeActiveTerminal, 800);
+}
+
+function showCreatingSession(changes) {
+  state.creatingSession = true;
+  els.wizard.classList.add("hidden");
+  els.noSession.classList.add("hidden");
+  els.terminalPanel.classList.remove("hidden");
+  els.composer.classList.add("hidden");
+  hideSuggestions();
+  if (state.term) {
+    resetRenderedOutputState();
+    resetRenderedTerminal();
+    state.term.write("Creating session...\r\n");
+    state.term.write("Starting the runtime and interactive terminal. This can take a few seconds.\r\n");
+    fitTerminalSoon();
+  }
+  send("new.confirm", { changes });
 }
 
 function handleMessage(message) {
-  if (message.type === "state") render(message.state);
+  if (message.type === "state") {
+    state.creatingSession = false;
+    render(message.state);
+  }
   if (message.type === "suggestions") renderSuggestions(message.items || []);
   if (message.type === "dir.entries") renderDirectory(message.data);
   if (message.type === "term.opened") connectTerminal(message.terminal_id);
@@ -142,47 +210,154 @@ function handleMessage(message) {
 
 function render(next) {
   state.app = next;
-  renderStatus(next.status);
+  renderStatus(next.status, next.active_session_activity);
   renderTabs(next.sessions, next.active_session_id);
+  renderViewToggle(next.output_view);
   renderWizard(next.pending_new);
   const noSession = !next.has_active_session && !next.pending_new;
   els.noSession.classList.toggle("hidden", !noSession);
   els.terminalPanel.classList.toggle("hidden", noSession);
-  els.composer.classList.toggle("hidden", state.terminalExclusive);
+  els.composer.classList.toggle("hidden", state.terminalExclusive || noSession);
   els.composer.classList.toggle("disabled", noSession);
-  els.message.disabled = false;
+  els.message.disabled = noSession;
   els.terminalModeBar.classList.toggle("hidden", !state.terminalMode);
   document.body.classList.toggle("terminal-exclusive", state.terminalExclusive);
   if (state.term) {
+    let outputChanged = false;
     if (!state.terminalMode) {
-      state.term.clear();
-      if (noSession) {
-        state.term.write("");
-      } else {
-        state.term.write((next.output_text || "").replace(/\n/g, "\r\n"));
+      const output = noSession ? "" : (next.output_text || "");
+      const outputSession = next.active_session_id || "";
+      const outputView = next.output_view || "";
+      const outputKey = `${noSession ? "no-session" : "session"}:${outputSession}:${outputView}:${output}`;
+      if (outputKey !== state.renderedOutputKey) {
+        state.renderedOutputKey = outputKey;
+        outputChanged = true;
+        const canAppend =
+          !noSession &&
+          outputSession === state.renderedOutputSession &&
+          outputView === state.renderedOutputView &&
+          output.startsWith(state.renderedOutputText);
+        if (canAppend) {
+          const delta = output.slice(state.renderedOutputText.length);
+          state.term.write(delta.replace(/\n/g, "\r\n"), () => {
+            state.term.scrollToBottom();
+          });
+        } else {
+          resetRenderedTerminal();
+          if (!noSession) {
+            state.term.write(output.replace(/\n/g, "\r\n"), () => {
+              state.term.scrollToBottom();
+            });
+          } else {
+            state.term.write("", () => {
+              state.term.scrollToBottom();
+            });
+          }
+        }
+        state.renderedOutputText = output;
+        state.renderedOutputSession = outputSession;
+        state.renderedOutputView = outputView;
       }
     }
-    requestAnimationFrame(() => state.fit.fit());
+    const layoutKey = [
+      noSession ? "no-session" : "session",
+      state.terminalMode ? "term" : "normal",
+      state.terminalExclusive ? "exclusive" : "inline",
+      next.active_session_id || "",
+      next.pending_new ? "wizard" : "stable",
+    ].join(":");
+    if (outputChanged || layoutKey !== state.renderedLayoutKey) {
+      state.renderedLayoutKey = layoutKey;
+      fitTerminalSoon();
+    }
   }
   if (next.error) showError(next.error);
 }
 
-function renderStatus(status) {
+function resetRenderedTerminal() {
+  // xterm.clear() clears visible cells but can preserve the cursor position.
+  // On tab switches that makes a shorter CLI transcript start after the last
+  // tmux line. Reset keeps normal yikes! rendering independent per session.
+  state.term.reset();
+  state.term.write("\x1b[H\x1b[2J\x1b[3J");
+}
+
+function resetRenderedOutputState() {
+  state.renderedOutputKey = "";
+  state.renderedOutputText = "";
+  state.renderedOutputSession = "";
+  state.renderedOutputView = "";
+}
+
+function renderViewToggle(view) {
+  const isDev = view === "dev";
+  els.viewToggle.textContent = isDev ? "</>" : "{}";
+  els.viewToggle.classList.toggle("active", isDev);
+  els.viewToggle.title = isDev ? "Dev view: showing raw terminal pane" : "High-level view: showing prompts and answers";
+}
+
+function renderStatus(status, activity) {
   const items = [
     ["Backend", status.backend],
     ["Location", status.location],
     ["Driver", status.driver],
-    ["Model", status.model],
+    ["Model", status.model, "model"],
     ["Complexity", status.complexity],
-    ["Web", status.web],
+    ["Web", status.web, "web_search"],
+    ["Capture", status.capture],
+    ["Activity", activity?.label || "unknown"],
   ];
-  els.status.replaceChildren(...items.flatMap(([key, value]) => {
+  els.status.replaceChildren(...items.flatMap(([key, value, control]) => {
     const dt = document.createElement("dt");
     dt.textContent = key;
     const dd = document.createElement("dd");
-    dd.textContent = value;
+    const editor = renderStatusControl(control, value);
+    if (editor) dd.append(editor);
+    else dd.textContent = value;
     return [dt, dd];
   }));
+  renderActivity(activity);
+}
+
+function renderStatusControl(control, value) {
+  const controls = state.app?.controls || {};
+  if (!controls.editable) return null;
+  if (control === "model") {
+    const select = document.createElement("select");
+    select.className = "status-select";
+    const options = controls.model_options || ["default"];
+    for (const item of options) {
+      const option = document.createElement("option");
+      option.value = item;
+      option.textContent = item === "default" ? "(default)" : item;
+      select.append(option);
+    }
+    select.value = controls.model || "default";
+    select.onchange = () => send("config.update", { changes: { model: select.value } });
+    return select;
+  }
+  if (control === "web_search") {
+    const select = document.createElement("select");
+    select.className = "status-select";
+    for (const item of ["on", "off"]) {
+      const option = document.createElement("option");
+      option.value = item;
+      option.textContent = item;
+      select.append(option);
+    }
+    select.value = controls.web_search || (value === "enabled" ? "on" : "off");
+    select.onchange = () => send("config.update", { changes: { web_search: select.value } });
+    return select;
+  }
+  return null;
+}
+
+function renderActivity(activity) {
+  const value = activity?.label || "unknown";
+  const stateName = activity?.state || "unknown";
+  els.activityPill.textContent = value;
+  els.activityPill.title = activity?.reason || "";
+  els.activityPill.className = `activity-pill activity-${stateName}`;
 }
 
 function renderTabs(sessions, activeId) {
@@ -203,15 +378,43 @@ function renderTabs(sessions, activeId) {
   els.tabs.replaceChildren(...sessions.map(session => {
     const tab = document.createElement("button");
     tab.className = `tab ${session.id === activeId ? "active" : ""}`;
-    tab.innerHTML = `<span class="tab-title">${escapeHtml(session.id)}</span><span class="tab-meta">${escapeHtml(session.runtime)}/${escapeHtml(session.backend)} ${escapeHtml(session.state)}</span>`;
-    tab.onclick = () => send("session.switch", { session_id: session.id });
+    const activity = session.activity ? ` · ${session.activity.label}` : "";
+    tab.innerHTML = `<span class="tab-content"><span class="tab-title">${escapeHtml(session.id)}</span><span class="tab-meta">${escapeHtml(session.runtime)}/${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(activity)}</span></span><span class="tab-close" title="Close session">×</span>`;
+    tab.onclick = () => {
+      if (session.id !== activeId) send("session.switch", { session_id: session.id });
+    };
+    tab.querySelector(".tab-close").onclick = event => {
+      event.stopPropagation();
+      send("session.close", { session_id: session.id });
+    };
     return tab;
   }), plus);
 }
 
 function renderWizard(draft) {
   els.wizard.classList.toggle("hidden", !draft);
-  if (!draft) return;
+  if (!draft) {
+    state.renderedWizardKey = "";
+    return;
+  }
+  const wizardKey = JSON.stringify({
+    backend: draft.backend,
+    location: draft.location,
+    driver: draft.driver,
+    model: draft.model,
+    complexity: draft.complexity,
+    web_search: draft.web_search,
+    managed_output: draft.managed_output,
+    root: draft.root || "",
+    choices: draft.choices,
+  });
+  const active = document.activeElement;
+  const focusedSelectInWizard = active?.tagName === "SELECT" && els.wizard.contains(active);
+  if (wizardKey === state.renderedWizardKey || focusedSelectInWizard) {
+    els.browserPath.textContent = draft.root || "No file access";
+    return;
+  }
+  state.renderedWizardKey = wizardKey;
   const fields = [
     ["backend", "Backend"],
     ["location", "Location"],
@@ -219,6 +422,7 @@ function renderWizard(draft) {
     ["model", "Model"],
     ["complexity", "Complexity"],
     ["web_search", "Web search"],
+    ["managed_output", "Capture"],
   ];
   els.wizardGrid.replaceChildren(...fields.map(([key, label]) => {
     const wrap = document.createElement("label");
@@ -226,24 +430,30 @@ function renderWizard(draft) {
     const title = document.createElement("span");
     title.textContent = label;
     const select = document.createElement("select");
-    const values = key === "web_search" ? ["on", "off"] : (draft.choices[key] || []);
+    select.dataset.key = key;
+    const values = (key === "web_search" || key === "managed_output") ? ["on", "off"] : (draft.choices[key] || []);
     for (const value of values) {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = value;
       select.append(option);
     }
-    select.value = key === "web_search" ? (draft.web_search ? "on" : "off") : draft[key];
+    select.value = key === "web_search"
+      ? (draft.web_search ? "on" : "off")
+      : key === "managed_output"
+        ? (draft.managed_output ? "on" : "off")
+        : draft[key];
     select.onchange = () => send("new.update", { changes: { [key]: select.value } });
     wrap.append(title, select);
     return wrap;
   }));
   els.browserPath.textContent = draft.root || "No file access";
-  if (!state.dirRoot) send("dir.list", {});
 }
 
 function renderDirectory(data) {
   state.dirRoot = data.root || "";
+  els.browserList.classList.remove("hidden");
+  document.getElementById("root-current").classList.remove("hidden");
   els.browserPath.textContent = state.app?.pending_new?.root || data.root || "";
   const buttons = [];
   if (data.parent) {
@@ -266,6 +476,8 @@ function renderDirectory(data) {
 }
 
 function chooseRoot(path) {
+  els.browserList.classList.add("hidden");
+  document.getElementById("root-current").classList.add("hidden");
   send("new.update", { changes: { root: path } });
 }
 
@@ -275,7 +487,8 @@ function submitText(text) {
 }
 
 function handleLocalCommand(text) {
-  const command = text.trim().split(/\s+/, 1)[0].toLowerCase();
+  const rawCommand = text.trim().split(/\s+/, 1)[0].toLowerCase();
+  const command = resolveLocalCommand(rawCommand);
   if (command === "/term") {
     openTerminalMode({ exclusive: false });
     return true;
@@ -291,6 +504,13 @@ function handleLocalCommand(text) {
   return false;
 }
 
+function resolveLocalCommand(rawCommand) {
+  const commands = ["/term", "/terminal", "/fullscreen", "/overtake", "/resume"];
+  if (commands.includes(rawCommand)) return rawCommand;
+  const matches = commands.filter(command => command.startsWith(rawCommand));
+  return matches.length === 1 ? matches[0] : rawCommand;
+}
+
 function openTerminalMode({ exclusive }) {
   if (!state.app?.active_session_id) {
     showError("No active tmux session is selected.");
@@ -299,6 +519,9 @@ function openTerminalMode({ exclusive }) {
   closeTerminalSocket();
   state.terminalMode = true;
   state.terminalExclusive = Boolean(exclusive);
+  state.returnSessionId = state.app.active_session_id || "";
+  resetRenderedOutputState();
+  state.renderedLayoutKey = "";
   document.body.classList.toggle("terminal-exclusive", state.terminalExclusive);
   els.terminalModeBar.classList.remove("hidden");
   els.composer.classList.toggle("hidden", state.terminalExclusive);
@@ -306,7 +529,7 @@ function openTerminalMode({ exclusive }) {
   state.term.clear();
   state.term.write("Connecting to tmux...\r\n");
   requestAnimationFrame(() => {
-    state.fit.fit();
+    resizeActiveTerminalRepeatedly();
     state.term.focus();
     state.pendingTerminalOpen = {
       session_id: state.app.active_session_id,
@@ -315,12 +538,14 @@ function openTerminalMode({ exclusive }) {
     };
     state.retriedTerminalOpen = false;
     send("term.open", state.pendingTerminalOpen);
+    resizeActiveTerminalRepeatedly();
   });
 }
 
 function connectTerminal(terminalId) {
   closeTerminalSocket();
   state.termTerminalId = terminalId;
+  state.termSessionId = state.pendingTerminalOpen?.session_id || state.app?.active_session_id || "";
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const cols = state.term ? state.term.cols : 120;
   const rows = state.term ? state.term.rows : 34;
@@ -332,6 +557,7 @@ function connectTerminal(terminalId) {
     if (!state.term) return;
     state.term.clear();
     state.term.focus();
+    resizeActiveTerminalRepeatedly();
   };
   state.termWs.onmessage = event => {
     if (!state.term || !(event.data instanceof ArrayBuffer)) return;
@@ -347,6 +573,19 @@ function sendTerminalData(data) {
   state.termWs.send(new TextEncoder().encode(data));
 }
 
+function resizeActiveTerminal() {
+  if (!state.term || !state.terminalMode) return;
+  state.fit.fit();
+  const cols = state.term.cols;
+  const rows = state.term.rows;
+  if (state.termWs && state.termWs.readyState === WebSocket.OPEN) {
+    state.termWs.send(JSON.stringify({ type: "resize", cols, rows }));
+  }
+  if (state.termSessionId) {
+    send("term.resize", { session_id: state.termSessionId, cols, rows });
+  }
+}
+
 function closeTerminalSocket() {
   if (state.termWs) {
     state.termWs.close();
@@ -356,18 +595,27 @@ function closeTerminalSocket() {
     send("term.close", { terminal_id: state.termTerminalId });
     state.termTerminalId = "";
   }
+  state.termSessionId = "";
 }
 
 function closeTerminalMode() {
+  const returnSessionId = state.returnSessionId || state.termSessionId || state.pendingTerminalOpen?.session_id || state.app?.active_session_id || "";
   closeTerminalSocket();
   state.terminalMode = false;
   state.terminalExclusive = false;
   state.pendingTerminalOpen = null;
   state.retriedTerminalOpen = false;
+  state.returnSessionId = "";
+  resetRenderedOutputState();
+  state.renderedLayoutKey = "";
   document.body.classList.remove("terminal-exclusive");
   els.terminalModeBar.classList.add("hidden");
   els.composer.classList.remove("hidden");
-  send("state");
+  if (returnSessionId) {
+    send("session.switch", { session_id: returnSessionId });
+  } else {
+    send("state");
+  }
   els.message.focus();
 }
 
@@ -426,7 +674,19 @@ function hideSuggestions() {
 
 function showError(message) {
   if (!message) return;
+  const now = Date.now();
+  if (message === state.lastErrorMessage && now - state.lastErrorAt < 5000) return;
+  state.lastErrorMessage = message;
+  state.lastErrorAt = now;
   if (state.term) state.term.write(`\r\n\x1b[31mError:\x1b[0m ${message}\r\n`);
+}
+
+function wizardFormChanges() {
+  const changes = {};
+  els.wizard.querySelectorAll("select[data-key]").forEach(select => {
+    changes[select.dataset.key] = select.value;
+  });
+  return changes;
 }
 
 function escapeHtml(text) {
@@ -484,9 +744,15 @@ function openConfirmDialog({ title, body, confirmText, onConfirm }) {
 
 document.getElementById("empty-new").onclick = () => send("new.open");
 document.getElementById("wizard-cancel").onclick = () => send("new.cancel");
-document.getElementById("wizard-create").onclick = () => send("new.confirm");
+document.getElementById("wizard-create").onclick = () => showCreatingSession(wizardFormChanges());
 document.getElementById("root-none").onclick = () => chooseRoot("");
-document.getElementById("root-start").onclick = () => chooseRoot(state.dirRoot || "");
+document.getElementById("root-start").onclick = () => chooseRoot(state.app?.start_cwd || "");
+document.getElementById("root-browse").onclick = () => send("dir.list", { root: state.app?.pending_new?.root || "" });
+document.getElementById("root-current").onclick = () => chooseRoot(state.dirRoot || "");
+els.viewToggle.onclick = () => {
+  const next = state.app?.output_view === "dev" ? "high" : "dev";
+  submitText(`/view ${next}`);
+};
 els.termReturn.onclick = () => closeTerminalMode();
 els.tabs.addEventListener("contextmenu", openContextMenu);
 document.addEventListener("click", event => {

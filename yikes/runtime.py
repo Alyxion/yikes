@@ -86,6 +86,7 @@ class DurableSessionManager:
         driver: Driver,
         runtime: RuntimeRef,
         cwd: Path,
+        session_id: str | None = None,
         model: str | None = None,
         complexity: Complexity = Complexity.MEDIUM,
         settings: AgentSettings | None = None,
@@ -93,7 +94,7 @@ class DurableSessionManager:
         credential_grants: tuple[CredentialGrant, ...] = (),
         user_data: dict[str, str] | None = None,
     ) -> DurableSessionMeta:
-        sid = f"yik_{uuid4().hex[:12]}"
+        sid = session_id or f"yik_{uuid4().hex[:12]}"
         meta = DurableSessionMeta(
             id=sid,
             backend=backend,
@@ -160,6 +161,7 @@ def _settings_to_json(settings: AgentSettings) -> dict[str, object]:
     return {
         "web_search_enabled": settings.web_search_enabled,
         "tmux_enabled": settings.tmux_enabled,
+        "managed_output_enabled": settings.managed_output_enabled,
         "read_roots": [str(path) for path in settings.read_roots],
         "write_roots": [str(path) for path in settings.write_roots],
         "mcp_servers": [
@@ -180,6 +182,7 @@ def _settings_from_json(data: object) -> AgentSettings:
     return AgentSettings(
         web_search_enabled=bool(data.get("web_search_enabled", True)),
         tmux_enabled=bool(data.get("tmux_enabled", False)),
+        managed_output_enabled=bool(data.get("managed_output_enabled", True)),
         read_roots=tuple(Path(str(path)).expanduser() for path in data.get("read_roots", [])),
         write_roots=tuple(Path(str(path)).expanduser() for path in data.get("write_roots", [])),
         mcp_servers=tuple(

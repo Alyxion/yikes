@@ -110,6 +110,10 @@ class CommandSpec:
         normalized = token.removeprefix("/").lower()
         return normalized == self.name or normalized in self.aliases
 
+    def starts_with(self, prefix: str) -> bool:
+        normalized = prefix.removeprefix("/").lower()
+        return self.name.startswith(normalized) or any(alias.startswith(normalized) for alias in self.aliases)
+
 
 @dataclass
 class CommandRegistry:
@@ -145,7 +149,7 @@ class CommandRegistry:
 
         token, arg = self._parse(text)
         has_arg_boundary = " " in text
-        spec = self.find(token)
+        spec = self.find_exact(token)
         if spec is not None:
             context = CommandContext(conversation, self, model_registry, driver_registry)
             if has_arg_boundary and spec.argument_suggestions:
@@ -169,10 +173,26 @@ class CommandRegistry:
         return matches
 
     def find(self, token: str) -> CommandSpec | None:
+        exact = self.find_exact(token)
+        if exact is not None:
+            return exact
+        prefix = token.removeprefix("/").lower()
+        if not prefix:
+            return None
+        matches = [spec for spec in self.specs if spec.starts_with(prefix)]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    def find_exact(self, token: str) -> CommandSpec | None:
         for spec in self.specs:
             if spec.matches(token):
                 return spec
         return None
+
+    def resolve_name(self, token: str) -> str | None:
+        spec = self.find(token)
+        return spec.name if spec is not None else None
 
     def help_text(self) -> str:
         return "Commands: " + ", ".join(spec.display_usage for spec in self.specs)
@@ -227,8 +247,15 @@ def default_command_registry() -> CommandRegistry:
         parts = _split_args(arg)
         cwd = Path(parts[0]).expanduser() if parts else None
         context.conversation.start_new(cwd=cwd)
-        location = f" in {context.conversation.options.cwd}" if cwd is not None else ""
-        return CommandResult(f"Started new session{location}.")
+        options = context.conversation.options
+        return CommandResult(
+            "New session: "
+            f"{options.backend.value} on {options.location.value} via {options.mode.value}; "
+            f"model {options.model or 'default'}; "
+            f"complexity {options.complexity.value}; "
+            f"web {'on' if options.settings.web_search_enabled else 'off'}; "
+            f"root {options.cwd}."
+        )
 
     def model_command(context: CommandContext, arg: str) -> CommandResult:
         model = None if arg == "default" else arg
@@ -352,7 +379,7 @@ def default_command_registry() -> CommandRegistry:
         return CommandResult("Restarting yikes...", restart_requested=True)
 
     def view_command(_context: CommandContext, _arg: str) -> CommandResult:
-        return CommandResult("Usage: /view [full|extracted]")
+        return CommandResult("Usage: /view [high|dev]")
 
     def key_command(_context: CommandContext, _arg: str) -> CommandResult:
         return CommandResult("Usage: /key <Enter|Up|Down|Left|Right|Escape|C-c|...>")
@@ -380,6 +407,19 @@ def default_command_registry() -> CommandRegistry:
             context.conversation.set_web_search(False)
             return CommandResult("Web search disabled.")
         return CommandResult("Usage: /web [on|off]")
+
+    def capture_command(context: CommandContext, arg: str) -> CommandResult:
+        normalized = arg.lower()
+        if not normalized:
+            state = "enabled" if context.conversation.options.settings.managed_output_enabled else "disabled"
+            return CommandResult(f"Answer capture: {state}.")
+        if normalized in {"on", "enable", "enabled", "true", "yes"}:
+            context.conversation.set_settings(context.conversation.options.settings.with_managed_output(True))
+            return CommandResult("Answer capture enabled.")
+        if normalized in {"off", "disable", "disabled", "false", "no", "raw"}:
+            context.conversation.set_settings(context.conversation.options.settings.with_managed_output(False))
+            return CommandResult("Answer capture disabled.")
+        return CommandResult("Usage: /capture [on|off]")
 
     def tmux_command(context: CommandContext, arg: str) -> CommandResult:
         normalized = arg.lower()
@@ -527,6 +567,14 @@ def default_command_registry() -> CommandRegistry:
         ]
         return [option for option in options if not normalized or option.value.startswith(normalized)]
 
+    def capture_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
+        normalized = prefix.lower()
+        options = [
+            CommandSuggestion("on", "Enable clean answer capture for tmux chat turns", "/capture on"),
+            CommandSuggestion("off", "Use raw interactive tmux turns with no answer boundary", "/capture off"),
+        ]
+        return [option for option in options if not normalized or option.value.startswith(normalized)]
+
     def tmux_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
         normalized = prefix.lower()
         options = [
@@ -538,8 +586,8 @@ def default_command_registry() -> CommandRegistry:
     def view_suggestions(_context: CommandContext, prefix: str) -> list[CommandSuggestion]:
         normalized = prefix.lower()
         options = [
-            CommandSuggestion("extracted", "Show extracted assistant answers", "/view extracted"),
-            CommandSuggestion("full", "Show full captured output where available", "/view full"),
+            CommandSuggestion("high", "Show user-facing prompts and answers", "/view high"),
+            CommandSuggestion("dev", "Show the full raw terminal pane", "/view dev"),
         ]
         return [option for option in options if not normalized or option.value.startswith(normalized)]
 
@@ -711,6 +759,15 @@ def default_command_registry() -> CommandRegistry:
             web_command,
             usage="[open|on|off]",
             argument_suggestions=web_suggestions,
+        )
+    )
+    registry.register(
+        CommandSpec(
+            "capture",
+            "Enable or disable managed answer capture",
+            capture_command,
+            usage="[on|off]",
+            argument_suggestions=capture_suggestions,
         )
     )
     registry.register(

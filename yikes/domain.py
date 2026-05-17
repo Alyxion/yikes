@@ -69,6 +69,7 @@ class McpServer:
 class AgentSettings:
     web_search_enabled: bool = True
     tmux_enabled: bool = False
+    managed_output_enabled: bool = True
     read_roots: tuple[Path, ...] = ()
     write_roots: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServer, ...] = ()
@@ -78,6 +79,9 @@ class AgentSettings:
 
     def with_tmux(self, enabled: bool) -> "AgentSettings":
         return replace(self, tmux_enabled=enabled)
+
+    def with_managed_output(self, enabled: bool) -> "AgentSettings":
+        return replace(self, managed_output_enabled=enabled)
 
     def add_read_root(self, path: Path) -> "AgentSettings":
         return replace(self, read_roots=_append_unique_path(self.read_roots, path))

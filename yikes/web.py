@@ -8,6 +8,7 @@ from typing import Any
 from .app_core import YikesAppController
 from .terminal_bridge import WebTerminalManager, handle_terminal_ws
 from .web_auth import WebAuthConfig, developer_mode_from_env
+from .web_handler import WebMessageHandler
 
 try:
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -45,6 +46,7 @@ def create_app(
     app = FastAPI(title="yikes!")
     app.state.yikes = controller or YikesAppController()
     app.state.yikes_terminals = WebTerminalManager()
+    app.state.yikes_web_handler = WebMessageHandler(app.state.yikes, app.state.yikes_terminals)
     app.state.yikes_auth = auth or WebAuthConfig.load(developer_mode=developer_mode_from_env())
     _mount_llming_stage(app, use_stage=use_stage)
 
@@ -98,7 +100,10 @@ def create_app(
                 except json.JSONDecodeError:
                     await websocket.send_json({"type": "error", "message": "Invalid JSON message."})
                     continue
-                response = await _handle_message(app.state.yikes, app.state.yikes_terminals, message)
+                if str(message.get("type", "state")) == "submit":
+                    await app.state.yikes_web_handler.stream_submit(websocket, message)
+                    continue
+                response = await app.state.yikes_web_handler.handle(message)
                 await websocket.send_json(response)
         except WebSocketDisconnect:
             return
@@ -206,83 +211,6 @@ def _login_page(*, invalid: bool) -> str:
   </main>
 </body>
 </html>"""
-
-
-async def _handle_message(
-    controller: YikesAppController,
-    terminals: WebTerminalManager,
-    message: dict[str, Any],
-) -> dict[str, Any]:
-    msg_type = str(message.get("type", "state"))
-    try:
-        if msg_type == "state":
-            return {"type": "state", "state": controller.state()}
-        if msg_type == "submit":
-            text = str(message.get("text", ""))
-            state = await asyncio.to_thread(controller.submit, text)
-            return {"type": "state", "state": state}
-        if msg_type == "suggest":
-            text = str(message.get("text", ""))
-            return {"type": "suggestions", "items": controller.suggestions(text)}
-        if msg_type == "new.open":
-            return {"type": "state", "state": controller.open_new_session()}
-        if msg_type == "new.update":
-            changes = message.get("changes", {})
-            if not isinstance(changes, dict):
-                changes = {}
-            return {"type": "state", "state": controller.update_new_session(**changes)}
-        if msg_type == "new.confirm":
-            state = await asyncio.to_thread(controller.confirm_new_session)
-            return {"type": "state", "state": state}
-        if msg_type == "new.cancel":
-            return {"type": "state", "state": controller.cancel_new_session()}
-        if msg_type == "session.switch":
-            return {"type": "state", "state": controller.switch_session(str(message.get("session_id", "")))}
-        if msg_type == "session.close":
-            return {"type": "state", "state": controller.close_session(str(message.get("session_id", "")))}
-        if msg_type == "session.close_all":
-            return {"type": "state", "state": controller.close_all()}
-        if msg_type == "dir.list":
-            return {"type": "dir.entries", "data": controller.directory_entries(_optional_text(message.get("root")))}
-        if msg_type == "term.open":
-            attached = controller.attach_command(_optional_text(message.get("session_id")))
-            if attached is None:
-                return {"type": "error", "message": "No attachable tmux session is selected."}
-            session_id, command = attached
-            terminal = terminals.spawn(
-                session_id=session_id,
-                command=command,
-                cols=_int_or_default(message.get("cols"), 120),
-                rows=_int_or_default(message.get("rows"), 34),
-            )
-            return {
-                "type": "term.opened",
-                "terminal_id": terminal.terminal_id,
-                "session_id": session_id,
-                "title": terminal.title,
-            }
-        if msg_type == "term.close":
-            terminals.close(str(message.get("terminal_id", "")))
-            return {"type": "state", "state": controller.state()}
-    except Exception as exc:
-        state = controller.state()
-        state["error"] = str(exc)
-        return {"type": "state", "state": state}
-    return {"type": "error", "message": f"Unknown message type: {msg_type}"}
-
-
-def _optional_text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None
-
-
-def _int_or_default(value: object, default: int) -> int:
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
 
 
 app = create_app()

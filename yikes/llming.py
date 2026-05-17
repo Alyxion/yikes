@@ -21,6 +21,9 @@ class YikesLlmingBridge:
     def state(self) -> dict[str, Any]:
         return self.controller.state()
 
+    def activity(self, session_id: str | None = None) -> dict[str, Any]:
+        return self.controller.session_activity(session_id).to_json()
+
     def submit(self, text: str) -> dict[str, Any]:
         return self.controller.submit(text)
 
@@ -70,6 +73,10 @@ def build_session_router(prefix: str = "yikes"):
     @router.handler("state")
     async def state(session) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         return (await _bridge(session)).state()
+
+    @router.handler("activity")
+    async def activity(session, session_id: str | None = None) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        return (await _bridge(session)).activity(session_id)
 
     @router.handler("submit")
     async def submit(session, text: str) -> dict[str, Any]:  # type: ignore[no-untyped-def]

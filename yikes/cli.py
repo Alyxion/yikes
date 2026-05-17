@@ -8,11 +8,18 @@ from pathlib import Path
 from .domain import AgentSettings, Backend, Complexity, Driver, McpServer
 from .errors import YikesError
 from .events import DEFAULT_EVENT_STORE, EventLog
+from .prompt_profile import (
+    DEFAULT_PROMPT_PROFILE_PATH,
+    load_prompt_profile,
+    merge_prompt_profile_text,
+    prompt_profile_generation_prompt,
+)
 from .runtime import DEFAULT_RUNTIME_STORE
 from .sandbox import DEFAULT_SANDBOX_STORE
 from .services import ChatService
-from .session_inventory import SessionInventory, SessionLifecycle
+from .session_inventory import SessionInventory, SessionLifecycle, TmuxSessionController
 from .tokens import DEFAULT_TOKEN_STORE
+from .drivers import ask_backend
 
 try:
     import typer
@@ -25,6 +32,10 @@ if typer:
         add_completion=False,
         help="yikes! terminal app and chatbot smoke tools.",
     )
+    tmux_app = typer.Typer(help="Named tmux session automation.")
+    prompt_profile_app = typer.Typer(help="Manage the shared local prompt profile.")
+    app.add_typer(tmux_app, name="tmux")
+    app.add_typer(prompt_profile_app, name="prompt-profile")
 
     @app.command("chat-smoke")
     def chat_smoke(
@@ -36,13 +47,14 @@ if typer:
         complexity: Complexity = typer.Option(Complexity.MEDIUM, "--complexity"),
         web_search: bool = typer.Option(True, "--web-search/--no-web-search"),
         tmux: bool = typer.Option(False, "--tmux/--no-tmux", help="Use real interactive tmux transport where supported."),
+        capture: bool = typer.Option(True, "--capture/--no-capture", help="Use managed answer capture for tmux chat turns."),
         read_dir: list[Path] | None = typer.Option(None, "--read-dir"),
         write_dir: list[Path] | None = typer.Option(None, "--write-dir"),
         mcp: list[str] | None = typer.Option(None, "--mcp"),
         json_output: bool = typer.Option(False, "--json"),
     ) -> None:
         try:
-            settings = _settings_from_cli(web_search, tmux, read_dir, write_dir, mcp)
+            settings = _settings_from_cli(web_search, tmux, capture, read_dir, write_dir, mcp)
             result = ChatService().run_goal_flow(
                 backend,
                 driver,
@@ -81,6 +93,7 @@ if typer:
         complexity: Complexity | None = typer.Option(None, "--complexity"),
         web_search: bool | None = typer.Option(None, "--web-search/--no-web-search"),
         tmux: bool | None = typer.Option(None, "--tmux/--no-tmux"),
+        capture: bool | None = typer.Option(None, "--capture/--no-capture", help="Use managed answer capture for tmux chat turns."),
         read_dir: list[Path] | None = typer.Option(None, "--read-dir"),
         write_dir: list[Path] | None = typer.Option(None, "--write-dir"),
         mcp: list[str] | None = typer.Option(None, "--mcp"),
@@ -88,7 +101,7 @@ if typer:
         from .tui import run_tui
 
         parsed_driver = _parse_tui_driver(driver)
-        settings = _settings_from_cli(web_search, tmux, read_dir, write_dir, mcp) if _has_settings_cli(web_search, tmux, read_dir, write_dir, mcp) else None
+        settings = _settings_from_cli(web_search, tmux, capture, read_dir, write_dir, mcp) if _has_settings_cli(web_search, tmux, capture, read_dir, write_dir, mcp) else None
         run_tui(
             backend=backend,
             driver=parsed_driver,
@@ -132,6 +145,191 @@ if typer:
             typer.echo(shlex.join(command))
             return
         os.execvp(command[0], command)
+
+    @tmux_app.command("start")
+    def tmux_start(
+        name: str = typer.Argument(..., help="Stable yikes! tmux session name."),
+        backend: Backend = typer.Option(Backend.CODEX, "--backend", "-b", help="Agent backend to launch."),
+        cwd: Path = typer.Option(Path.cwd(), "--cwd", help="Working directory for the session."),
+        model: str | None = typer.Option(None, "--model", help="Backend model name."),
+        replace: bool = typer.Option(False, "--replace", help="Kill and recreate an existing session with this name."),
+        runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
+        sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
+        json_output: bool = typer.Option(False, "--json"),
+    ) -> None:
+        try:
+            result = TmuxSessionController(runtime_store=runtime_store, sandbox_store=sandbox_store).start(
+                name,
+                backend=backend,
+                cwd=cwd,
+                model=model,
+                replace=replace,
+            )
+        except YikesError as exc:
+            typer.echo(f"yikes: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        payload = {
+            "id": result.id,
+            "name": result.name,
+            "backend": result.backend,
+            "socket": result.socket,
+            "session": result.session,
+            "created": result.created,
+            "replaced": result.replaced,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload))
+            return
+        action = "replaced" if result.replaced else "started" if result.created else "already running"
+        typer.echo(f"{action}: {result.name} ({result.id}) {result.backend} @ {result.socket}")
+
+    @tmux_app.command("state")
+    def tmux_state(
+        name: str = typer.Argument(..., help="Session ID or stable tmux session name."),
+        lines: int = typer.Option(120, "--lines", help="Terminal lines to include with --output."),
+        output: bool = typer.Option(False, "--output", help="Print the captured terminal output."),
+        runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
+        sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
+        json_output: bool = typer.Option(False, "--json"),
+    ) -> None:
+        controller = TmuxSessionController(runtime_store=runtime_store, sandbox_store=sandbox_store)
+        try:
+            session_id, activity, snapshot = controller.state(name)
+        except YikesError as exc:
+            typer.echo(f"yikes: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        snapshot = "\n".join((snapshot or "").splitlines()[-lines:])
+        payload = {"id": session_id, "activity": activity.to_json(), "output": snapshot if output else None}
+        if json_output:
+            typer.echo(json.dumps(payload))
+            return
+        typer.echo(f"{session_id}: {activity.state} ({activity.reason})")
+        if output and snapshot:
+            typer.echo(snapshot)
+
+    @tmux_app.command("send")
+    def tmux_send(
+        name: str = typer.Argument(..., help="Session ID or stable tmux session name."),
+        text: str = typer.Argument(..., help="Text to paste into the session."),
+        submit: bool = typer.Option(True, "--submit/--no-submit", help="Press Enter after pasting."),
+        wait: bool = typer.Option(False, "--wait", help="Wait until the terminal settles or asks for selection."),
+        timeout: float = typer.Option(180.0, "--timeout", help="Maximum wait time in seconds."),
+        runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
+        sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
+        json_output: bool = typer.Option(False, "--json"),
+    ) -> None:
+        controller = TmuxSessionController(runtime_store=runtime_store, sandbox_store=sandbox_store)
+        result = controller.send(name, text, submit=submit)
+        if not result.closed:
+            typer.echo(result.message, err=True)
+            raise typer.Exit(1)
+        activity = controller.wait(name, timeout=timeout) if wait else None
+        if json_output:
+            typer.echo(json.dumps({"ok": True, "message": result.message, "activity": activity.to_json() if activity else None}))
+            return
+        typer.echo(result.message)
+        if activity is not None:
+            typer.echo(f"state: {activity.state} ({activity.reason})")
+
+    @tmux_app.command("wait")
+    def tmux_wait(
+        name: str = typer.Argument(..., help="Session ID or stable tmux session name."),
+        timeout: float = typer.Option(180.0, "--timeout", help="Maximum wait time in seconds."),
+        runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
+        sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
+        json_output: bool = typer.Option(False, "--json"),
+    ) -> None:
+        controller = TmuxSessionController(runtime_store=runtime_store, sandbox_store=sandbox_store)
+        try:
+            activity = controller.wait(name, timeout=timeout)
+        except YikesError as exc:
+            typer.echo(f"yikes: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        if json_output:
+            typer.echo(json.dumps(activity.to_json()))
+            return
+        typer.echo(f"{activity.state}: {activity.reason}")
+        if activity.reason.startswith("timeout after"):
+            raise typer.Exit(1)
+
+    @tmux_app.command("kill")
+    def tmux_kill(
+        name: str = typer.Argument(..., help="Session ID or stable tmux session name."),
+        runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
+        sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
+    ) -> None:
+        result = TmuxSessionController(runtime_store=runtime_store, sandbox_store=sandbox_store).kill(name)
+        typer.echo(result.message)
+        if not result.closed:
+            raise typer.Exit(1)
+
+    @prompt_profile_app.command("ensure")
+    def prompt_profile_ensure(
+        path: Path | None = typer.Option(None, "--path", help="Profile path. Defaults to the shared user-local profile."),
+        json_output: bool = typer.Option(False, "--json"),
+    ) -> None:
+        profile = load_prompt_profile(path)
+        target = (path or DEFAULT_PROMPT_PROFILE_PATH).expanduser()
+        payload = {
+            "path": str(target),
+            "version": profile.version,
+            "setup_variants": len(profile.setup_variants),
+            "boundary_templates": len(profile.boundary_templates),
+            "marker_pairs": len(profile.marker_pairs),
+            "shared_for": ["codex", "claude"],
+        }
+        if json_output:
+            typer.echo(json.dumps(payload))
+            return
+        typer.echo(
+            f"prompt profile ready: {target} "
+            f"({payload['setup_variants']} setup, {payload['boundary_templates']} boundary, "
+            f"{payload['marker_pairs']} marker pairs; shared for Codex and Claude)"
+        )
+
+    @prompt_profile_app.command("generate")
+    def prompt_profile_generate(
+        backend: Backend = typer.Option(Backend.CODEX, "--backend", "-b", help="Backend CLI used once to propose variants."),
+        path: Path | None = typer.Option(None, "--path", help="Profile path. Defaults to the shared user-local profile."),
+        count: int = typer.Option(10, "--count", help="Target number of variants to request."),
+        model: str | None = typer.Option(None, "--model", help="Optional backend model."),
+        timeout: float = typer.Option(180.0, "--timeout", help="Generation timeout in seconds."),
+        replace: bool = typer.Option(False, "--replace", help="Replace instead of extending the existing profile."),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Print generated JSON without writing it."),
+        json_output: bool = typer.Option(False, "--json"),
+    ) -> None:
+        existing = load_prompt_profile(path)
+        prompt = prompt_profile_generation_prompt(existing, count=count)
+        raw = ask_backend(
+            backend,
+            Driver.DIRECT,
+            prompt,
+            cwd=Path.cwd(),
+            timeout=timeout,
+            model=model,
+            settings=AgentSettings(web_search_enabled=False),
+        )
+        if dry_run:
+            typer.echo(raw)
+            return
+        updated = merge_prompt_profile_text(raw, path=path, replace=replace)
+        target = (path or DEFAULT_PROMPT_PROFILE_PATH).expanduser()
+        payload = {
+            "path": str(target),
+            "backend": backend.value,
+            "setup_variants": len(updated.setup_variants),
+            "boundary_templates": len(updated.boundary_templates),
+            "marker_pairs": len(updated.marker_pairs),
+            "shared_for": ["codex", "claude"],
+        }
+        if json_output:
+            typer.echo(json.dumps(payload))
+            return
+        typer.echo(
+            f"updated shared prompt profile: {target} "
+            f"({payload['setup_variants']} setup, {payload['boundary_templates']} boundary, "
+            f"{payload['marker_pairs']} marker pairs)"
+        )
 
     @app.command("close-all")
     def close_all(
@@ -202,7 +400,8 @@ if typer:
         host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
         port: int = typer.Option(8760, "--port", "-p", help="HTTP port."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Default start directory for new sessions."),
-        dev: bool = typer.Option(True, "--dev/--no-dev", help="Persist the local login key in .env for development."),
+        dev: bool = typer.Option(False, "--dev/--no-dev", help="Enable development reload endpoints."),
+        persistent_auth: bool = typer.Option(True, "--persistent-auth/--ephemeral-auth", help="Reuse the local login key across restarts."),
         open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the web UI in the default browser."),
     ) -> None:
         import threading
@@ -216,7 +415,7 @@ if typer:
         from .web_auth import WebAuthConfig
 
         root = (cwd or Path.cwd()).expanduser()
-        auth_config = WebAuthConfig.load(developer_mode=dev, env_path=root / ".env")
+        auth_config = WebAuthConfig.load(developer_mode=dev, env_path=root / ".env", persist_auth=persistent_auth)
         url = auth_config.login_url(host=host, port=port)
         app_instance = create_app(YikesAppController(cwd=root), auth=auth_config)
         if open_browser:
@@ -247,16 +446,18 @@ def main(argv: list[str] | None = None) -> int:
 def _has_settings_cli(
     web_search: bool | None,
     tmux: bool | None,
+    capture: bool | None,
     read_dir: list[Path] | None,
     write_dir: list[Path] | None,
     mcp: list[str] | None,
 ) -> bool:
-    return web_search is not None or tmux is not None or bool(read_dir) or bool(write_dir) or bool(mcp)
+    return web_search is not None or tmux is not None or capture is not None or bool(read_dir) or bool(write_dir) or bool(mcp)
 
 
 def _settings_from_cli(
     web_search: bool | None,
     tmux: bool | None,
+    capture: bool | None,
     read_dir: list[Path] | None,
     write_dir: list[Path] | None,
     mcp: list[str] | None,
@@ -264,6 +465,7 @@ def _settings_from_cli(
     return AgentSettings(
         web_search_enabled=True if web_search is None else web_search,
         tmux_enabled=False if tmux is None else tmux,
+        managed_output_enabled=True if capture is None else capture,
         read_roots=tuple(path.expanduser() for path in (read_dir or ())),
         write_roots=tuple(path.expanduser() for path in (write_dir or ())),
         mcp_servers=tuple(_parse_mcp_spec(spec) for spec in (mcp or ())),

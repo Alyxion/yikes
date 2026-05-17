@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import fcntl
 import os
 from pathlib import Path
 import pty
+import select
+import shutil
+import signal
+import struct
+import subprocess
 import sys
 import tempfile
+import termios
+import tty
+from collections.abc import Callable
 
 from .attachments import attachable_image_names, extract_image_attachments, read_clipboard_text, save_clipboard_image
+from .activity import ActivityMonitor
 from .capabilities import default_driver_registry
 from .domain import AgentSettings, Backend, Complexity, Driver, DriverMode, ExecutionLocation, ImageAttachment
+from .drivers import ensure_interactive_session
+from .prompt_profile import DEFAULT_PROMPT_PROFILE_PATH, load_prompt_profile
 from .services import ChatService, Conversation
-from .session_inventory import SessionInventory, SessionLifecycle
+from .session_inventory import SessionInventory, SessionLifecycle, record_direct_session
 from .state import AppState, load_app_state, save_app_state
+from .transcript import high_level_transcript
 
 
 def run_tui(
@@ -136,8 +149,11 @@ def run_tui(
 
         def __init__(self) -> None:
             super().__init__()
+            self.start_cwd = (cwd or Path.cwd()).expanduser()
             self.restart_requested = False
             self.attach_command: list[str] | None = None
+            self.attach_session_id: str | None = None
+            self.activity_monitor = ActivityMonitor()
             self.pending_images: list[ImageAttachment] = []
             self.saved_state = load_app_state()
             resolved_backend = backend or self.saved_state.backend
@@ -147,17 +163,20 @@ def run_tui(
             resolved_complexity = complexity or self.saved_state.complexity
             resolved_settings = settings or self.saved_state.settings
             self.service = ChatService()
+            self.preferred_session_id = os.environ.pop("YIKES_RETURN_SESSION_ID", "")
             self.active_session_id: str | None = None
             self.session_tab_ids: set[str] = set()
+            self.live_snapshot_text = ""
             self.updating_session_tabs = False
             self.close_all_confirmation_pending = False
             self.has_active_session = False
-            self.output_view = "extracted"
+            self.output_view = "high"
+            self.submission_active = False
             self.question_mode = False
             self.question_browse_mode = False
             self.question_index = 0
             self.question_choices: dict[str, str] = {}
-            self.question_browse_path = Path.cwd()
+            self.question_browse_path = self.start_cwd
             self.question_browse_entries: list[Path] = []
             self.question_browse_index = 0
             self.conversation: Conversation = self.service.create_conversation(
@@ -181,12 +200,11 @@ def run_tui(
                     yield Static("", id="model-status")
                     yield Static("", id="complexity-status")
                     yield Static("", id="web-status")
+                    yield Static("", id="capture-status")
+                    yield Static("", id="activity-status")
                     yield Static("", id="session-count")
                     yield Button("New Session", id="new-session", classes="sidebar-button")
-                    yield Button("Refresh Sessions", id="refresh-sessions", classes="sidebar-button")
-                    with Horizontal(id="session-actions"):
-                        yield Button("Attach", id="attach-session")
-                        yield Button("Close", id="close-session")
+                    yield Button("Close", id="close-session", classes="sidebar-button")
                     yield Button("Fullscreen tmux", id="fullscreen-session", classes="sidebar-button")
                     yield Button("Close All", id="close-all", classes="sidebar-button")
                 with Vertical(id="chat"):
@@ -205,19 +223,29 @@ def run_tui(
             yield Footer()
 
         async def on_mount(self) -> None:
+            profile = load_prompt_profile()
             log = self.query_one("#log", RichLog)
             log.write("[bold green]Ready.[/bold green] Type a message and press Enter.")
             log.write(
-                "[dim]Use /backend, /location, /driver, /model, /web, and /new for configuration. "
-                "/models shows valid model options.[/dim]"
+                "[dim]Prompt profile ready: "
+                f"{len(profile.setup_variants)} setup variants, "
+                f"{len(profile.boundary_templates)} boundary variants, "
+                f"shared for Codex and Claude @ {DEFAULT_PROMPT_PROFILE_PATH.expanduser()}.[/dim]"
             )
+            log.write("[dim]Create a session with the dialog, then chat or attach to the terminal.[/dim]")
             log.write("[dim]Press Ctrl+V to paste text or attach a clipboard image. Ctrl+O forces image-only paste.[/dim]")
             self._refresh_controls()
+            self.set_interval(1.6, self._refresh_activity_status)
+            self.set_interval(1.6, self._refresh_live_tmux_output)
             self._save_state()
             self._hide_suggestions()
             sessions = await self._refresh_sessions()
             if sessions:
-                await self._restore_session(sessions[0].id, announce=True)
+                preferred = next(
+                    (session for session in sessions if session.id == self.preferred_session_id),
+                    sessions[0],
+                )
+                await self._restore_session(preferred.id, announce=True)
             else:
                 self._announce_default_start()
             self.query_one("#prompt", Input).focus()
@@ -408,23 +436,39 @@ def run_tui(
             self.query_one("#complexity-status", Static).update(f"Complexity: {options.complexity.value}")
             web_state = "on" if options.settings.web_search_enabled else "off"
             self.query_one("#web-status", Static).update(f"Web: {web_state}")
+            capture_state = "on" if options.settings.managed_output_enabled else "off"
+            self.query_one("#capture-status", Static).update(f"Capture: {capture_state}")
+            self._refresh_activity_status()
             if self.has_active_session:
                 self.active_session_id = options.session_id
 
+        def _refresh_activity_status(self) -> None:
+            target = self.query_one("#activity-status", Static)
+            session_id = self._selected_session_id() if self.has_active_session else None
+            if not session_id:
+                target.update("Activity: unknown")
+                return
+            snapshot = SessionLifecycle().snapshot(session_id, lines=120)
+            activity = self.activity_monitor.observe(session_id, snapshot)
+            target.update(f"Activity: {activity.label}")
+
         async def _refresh_sessions(self) -> list[object]:
             sessions = SessionInventory().list()
-            self.session_tab_ids = {session.id for session in sessions}
-            self.query_one("#session-count", Static).update(f"Sessions: {len(sessions)}")
+            visible_sessions = [session for session in sessions if session.state not in {"dead", "stopped"}]
+            dead_count = len(sessions) - len(visible_sessions)
+            self.session_tab_ids = {session.id for session in visible_sessions}
+            suffix = f" ({dead_count} dead hidden)" if dead_count else ""
+            self.query_one("#session-count", Static).update(f"Sessions: {len(visible_sessions)}{suffix}")
             tabs = self.query_one("#session-tabs", Tabs)
             self.updating_session_tabs = True
             try:
                 await tabs.clear()
                 active = self.active_session_id or self.conversation.options.session_id
-                if sessions:
-                    valid = {session.id for session in sessions}
-                    selected = active if active in valid else sessions[0].id
+                if visible_sessions:
+                    live = {session.id for session in visible_sessions}
+                    selected = active if active in live else visible_sessions[0].id
                     self.active_session_id = selected
-                    for session in sessions:
+                    for session in visible_sessions:
                         label = f"{session.backend}/{session.runtime}/{session.id[-6:]}"
                         await tabs.add_tab(Tab(label, id=f"session-{session.id}"))
                     tabs.active = f"session-{selected}"
@@ -436,7 +480,10 @@ def run_tui(
                     self.active_session_id = None
             finally:
                 self.updating_session_tabs = False
-            return sessions
+            return visible_sessions
+
+        def _refresh_sessions_soon(self) -> None:
+            self.run_worker(self._refresh_sessions(), exclusive=False)
 
         def _selected_session_id(self) -> str:
             tabs = self.query_one("#session-tabs", Tabs)
@@ -448,6 +495,16 @@ def run_tui(
 
         async def _restore_session(self, session_id: str, *, announce: bool, refresh_tabs: bool = True) -> None:
             log = self.query_one("#log", RichLog)
+            summary = SessionLifecycle().summary(session_id)
+            if summary is not None and summary.state in {"dead", "stopped"}:
+                self.has_active_session = False
+                self.active_session_id = None
+                self._set_session_view(active=False)
+                self._show_no_session_message(
+                    f"Session {session_id} is {summary.state}. Close it and create or select another session."
+                )
+                await self._refresh_sessions()
+                return
             options = SessionLifecycle().switch_options(self.conversation.options, session_id)
             if options is None:
                 log.write(f"[bold red]yikes![/bold red] Session not found: {session_id}")
@@ -470,8 +527,22 @@ def run_tui(
                 log.write("[dim]Last terminal output:[/dim]")
                 log.write(snapshot)
 
-        async def _new_session(self, *, cwd: Path | None = None) -> None:
-            self.conversation.start_new(cwd=cwd)
+        async def _new_session(self, *, cwd: Path | None = None, cwd_explicit: bool = True) -> None:
+            self.conversation.start_new(cwd=cwd, cwd_explicit=cwd_explicit)
+            startup_error: str | None = None
+            if self.conversation.options.mode is DriverMode.TMUX:
+                self.output_view = "dev"
+                try:
+                    ensure_interactive_session(self.conversation.options)
+                except Exception as exc:
+                    startup_error = f"Failed to start interactive tmux session: {exc}"
+            record_direct_session(
+                self.conversation.options,
+                user_data={
+                    "location": self.conversation.options.location.value,
+                    "mode": self.conversation.options.mode.value,
+                },
+            )
             self.has_active_session = True
             self.active_session_id = self.conversation.options.session_id
             self.pending_images.clear()
@@ -481,8 +552,20 @@ def run_tui(
             await self._refresh_sessions()
             self._save_state()
             self.query_one("#log", RichLog).write(
-                "[bold green]yikes![/bold green] Started new session. Use /backend, /location, /driver, /model, or /web to change defaults."
+                (
+                    "[bold green]yikes![/bold green] Started new session: "
+                    f"{self.conversation.options.backend.value} on {self.conversation.options.location.value} "
+                    f"via {self.conversation.options.mode.value}; "
+                    f"model {self.conversation.options.model or 'default'}; "
+                    f"complexity {self.conversation.options.complexity.value}; "
+                    f"web {'on' if self.conversation.options.settings.web_search_enabled else 'off'}."
+                )
             )
+            snapshot = SessionLifecycle().snapshot(self.active_session_id) if self.active_session_id else None
+            if snapshot:
+                self.query_one("#log", RichLog).write(snapshot)
+            if startup_error:
+                self.query_one("#log", RichLog).write(f"[bold red]Error:[/bold red] {startup_error}")
 
         def _announce_default_start(self) -> None:
             options = self.conversation.options
@@ -490,7 +573,7 @@ def run_tui(
             self.active_session_id = None
             self._set_session_view(active=False)
             self._show_no_session_message(
-                "No active session. Start one with the button or /new. "
+                "No active session. Start one with the New Session button. "
                 f"Defaults: {options.backend.value}/{options.location.value}/{options.mode.value}, "
                 f"model {options.model or 'default'}."
             )
@@ -504,7 +587,7 @@ def run_tui(
             prompt.placeholder = (
                 "Message, /help, /model, /clear..."
                 if active
-                else "/new, /backend, /location, /driver, /model..."
+                else "Create a session to start chatting"
             )
 
         def _show_no_session_message(self, message: str) -> None:
@@ -515,6 +598,39 @@ def run_tui(
                 self.query_one("#log", RichLog).write(f"[{style}]yikes![/{style}] {message}")
             else:
                 self._show_no_session_message(message)
+
+        def _sync_log_from_tmux(self, session_id: str | None = None) -> bool:
+            selected = session_id or self._selected_session_id()
+            if not selected:
+                return False
+            snapshot = SessionLifecycle().snapshot(selected)
+            if not snapshot:
+                return False
+            if self.output_view != "dev":
+                snapshot = high_level_transcript(snapshot, markers=SessionLifecycle().capture_markers(selected))
+            log = self.query_one("#log", RichLog)
+            log.clear()
+            log.write(snapshot)
+            self.live_snapshot_text = snapshot
+            return True
+
+        def _refresh_live_tmux_output(self) -> None:
+            if self.question_mode or not self.has_active_session:
+                return
+            if self.submission_active and self.output_view != "dev":
+                return
+            selected = self._selected_session_id()
+            if not selected:
+                return
+            snapshot = SessionLifecycle().snapshot(selected)
+            if not snapshot or snapshot == self.live_snapshot_text:
+                return
+            self.live_snapshot_text = snapshot
+            markers = SessionLifecycle().capture_markers(selected)
+            rendered = snapshot if self.output_view == "dev" else high_level_transcript(snapshot, markers=markers)
+            log = self.query_one("#log", RichLog)
+            log.clear()
+            log.write(rendered)
 
         def _open_new_session_question(self) -> None:
             options = self.conversation.options
@@ -528,6 +644,7 @@ def run_tui(
                 "model": options.model or "default",
                 "complexity": options.complexity.value,
                 "web": "on" if options.settings.web_search_enabled else "off",
+                "capture": "off" if options.mode is DriverMode.TMUX else ("on" if options.settings.managed_output_enabled else "off"),
                 "root": "none",
             }
             self.query_one("#log", RichLog).display = False
@@ -548,7 +665,7 @@ def run_tui(
             self.query_one("#prompt", Input).focus()
 
         def _question_rows(self) -> list[str]:
-            return ["backend", "location", "driver", "model", "complexity", "web", "root"]
+            return ["backend", "location", "driver", "model", "complexity", "web", "capture", "root"]
 
         def _question_options(self, row: str) -> list[str]:
             if row == "backend":
@@ -564,6 +681,8 @@ def run_tui(
             if row == "complexity":
                 return [level.value for level in Complexity]
             if row == "web":
+                return ["on", "off"]
+            if row == "capture":
                 return ["on", "off"]
             if row == "root":
                 return ["none", "start dir", "home", "browse"]
@@ -581,6 +700,8 @@ def run_tui(
                 model_options = self._question_options("model")
                 if self.question_choices.get("model") not in model_options:
                     self.question_choices["model"] = "default"
+            if row == "driver" and self.question_choices.get("driver") == DriverMode.TMUX.value:
+                self.question_choices["capture"] = "off"
 
         def _render_question(self) -> None:
             title = self.query_one("#question-title", Static)
@@ -609,6 +730,7 @@ def run_tui(
                 "model": "Model",
                 "complexity": "Complexity",
                 "web": "Web",
+                "capture": "Capture",
                 "root": "Root dir",
             }
             for index, row in enumerate(self._question_rows()):
@@ -659,8 +781,10 @@ def run_tui(
         async def _confirm_new_session_question(self) -> None:
             root = self.question_choices.get("root", "none")
             cwd_choice: Path | None
+            cwd_explicit = True
             if root == "none":
                 cwd_choice = Path(tempfile.mkdtemp(prefix="yikes-session-"))
+                cwd_explicit = False
             elif root == "start dir":
                 cwd_choice = Path.cwd()
             elif root == "home":
@@ -680,11 +804,18 @@ def run_tui(
                 self.conversation.set_model(None if model == "default" else model)
                 self.conversation.set_complexity(Complexity(self.question_choices["complexity"]))
                 self.conversation.set_web_search(self.question_choices.get("web") == "on")
+                self.conversation.set_settings(
+                    self.conversation.options.settings.with_managed_output(
+                        self.question_choices.get("capture") == "on"
+                    )
+                )
             except ValueError as exc:
                 self.query_one("#question-body", Static).update(f"[bold red]{exc}[/bold red]")
                 return
             self._close_question_mode()
-            await self._new_session(cwd=cwd_choice)
+            if self.conversation.options.mode is DriverMode.TMUX:
+                self.output_view = "dev"
+            await self._new_session(cwd=cwd_choice, cwd_explicit=cwd_explicit)
 
         async def _close_selected_session(self) -> None:
             log = self.query_one("#log", RichLog)
@@ -720,6 +851,7 @@ def run_tui(
                 log.write(f"[bold red]yikes![/bold red] Session not found or not attachable: {session_id}")
                 await self._refresh_sessions()
                 return
+            self.attach_session_id = session_id
             self.attach_command = command
             self.exit()
 
@@ -735,6 +867,7 @@ def run_tui(
                 await self._refresh_sessions()
                 return
             log.write("[bold green]yikes![/bold green] Entering fullscreen tmux. Press Ctrl-b to return to yikes!.")
+            self.attach_session_id = session_id
             self.attach_command = command
             self.exit()
 
@@ -797,8 +930,20 @@ def run_tui(
                     return
                 self.close_all_confirmation_pending = False
             if not self.has_active_session:
-                self._show_no_session_message("No active session. Use /new or the New Session button before sending a prompt.")
+                self._show_no_session_message("No active session. Create one with the New Session button or /new.")
                 return
+            selected = self._selected_session_id()
+            if selected:
+                summary = SessionLifecycle().summary(selected)
+                if summary is not None and summary.state in {"dead", "stopped"}:
+                    self.has_active_session = False
+                    self.active_session_id = None
+                    self._set_session_view(active=False)
+                    self._show_no_session_message(
+                        f"Session {selected} is {summary.state}. Close it and create or select another session."
+                    )
+                    await self._refresh_sessions()
+                    return
             text, extracted = extract_image_attachments(text, cwd=self.conversation.options.cwd)
             if extracted:
                 self._add_pending_images(extracted)
@@ -807,7 +952,11 @@ def run_tui(
             attachments = tuple(self.pending_images)
             self.pending_images.clear()
             attachment_note = f" [dim]({len(attachments)} image{'s' if len(attachments) != 1 else ''})[/dim]" if attachments else ""
+            if self.output_view == "dev":
+                self._sync_log_from_tmux()
             log.write(f"[bold cyan]You:[/bold cyan] {text}{attachment_note}")
+            log.write("[yellow]Working...[/yellow]")
+            self.submission_active = True
             self.ask_backend(text, attachments)
 
         async def _slash_command(self, text: str) -> None:
@@ -840,12 +989,14 @@ def run_tui(
 
         async def _handle_tui_command(self, text: str) -> bool:
             parts = text.strip().split(maxsplit=1)
-            command = parts[0].lower() if parts else ""
+            raw_command = parts[0].lower() if parts else ""
+            resolved = self.conversation.resolve_slash_command(raw_command)
+            command = f"/{resolved}" if resolved else raw_command
             arg = parts[1] if len(parts) > 1 else ""
             if command == "/web" and arg.strip().lower() in {"", "open", "ui", "app"}:
                 from .web_launcher import launch_web_ui
 
-                result = launch_web_ui(cwd=self.conversation.options.cwd, developer_mode=True)
+                result = launch_web_ui(cwd=self.start_cwd, developer_mode=True)
                 self._write_status(result.message, style="bold green")
                 return True
             if command in {"/fullscreen", "/overtake", "/term", "/terminal"}:
@@ -853,11 +1004,14 @@ def run_tui(
                 return True
             if command == "/view":
                 value = arg.strip().lower()
-                if value not in {"full", "extracted"}:
-                    self._write_status("Usage: /view [full|extracted]")
+                normalized = self._normalize_output_view(value)
+                if normalized is None:
+                    self._write_status("Usage: /view [high|dev]")
                     return True
-                self.output_view = value
-                self._write_status(f"Output view set to {value}.", style="bold green")
+                self.output_view = normalized
+                self.live_snapshot_text = ""
+                self._refresh_live_tmux_output()
+                self._write_status(f"Output view set to {normalized}.", style="bold green")
                 return True
             if command == "/key":
                 key = arg.strip()
@@ -889,17 +1043,33 @@ def run_tui(
         @work(thread=True)
         def ask_backend(self, text: str, attachments: tuple[ImageAttachment, ...] = ()) -> None:
             log = self.query_one("#log", RichLog)
-            self.call_from_thread(log.write, "[yellow]Working...[/yellow]")
             try:
                 answer = self.conversation.ask(text, attachments)
             except Exception as exc:
+                self.call_from_thread(self._mark_submission_done)
                 self.call_from_thread(log.write, f"[bold red]Error:[/bold red] {exc}")
+                self.call_from_thread(self._refresh_sessions_soon)
                 return
-            if self.output_view == "full":
+            self.call_from_thread(self._mark_submission_done)
+            self.call_from_thread(self._refresh_sessions_soon)
+            if self.output_view == "dev":
                 full_output = self._full_output(answer)
                 self.call_from_thread(log.write, f"[bold magenta]Full output:[/bold magenta]\n{full_output}")
                 return
-            self.call_from_thread(log.write, f"[bold magenta]Assistant:[/bold magenta] {answer}")
+            if self.conversation.options.mode is DriverMode.TMUX:
+                session_id = self._snapshot_session_id()
+                snapshot = SessionLifecycle().snapshot(session_id) if session_id else None
+                if snapshot:
+                    if self.output_view != "dev":
+                        snapshot = high_level_transcript(snapshot, markers=SessionLifecycle().capture_markers(session_id)) if session_id else snapshot
+                    self.call_from_thread(log.clear)
+                    self.call_from_thread(log.write, snapshot)
+                    return
+            if answer:
+                self.call_from_thread(log.write, f"[bold magenta]Assistant:[/bold magenta] {answer}")
+
+        def _mark_submission_done(self) -> None:
+            self.submission_active = False
 
         def _full_output(self, answer: str) -> str:
             session_id = self._snapshot_session_id()
@@ -923,20 +1093,119 @@ def run_tui(
                     return session.id
             return None
 
+        @staticmethod
+        def _normalize_output_view(value: str) -> str | None:
+            if value in {"high", "normal", "transcript", "extracted"}:
+                return "high"
+            if value in {"dev", "debug", "raw", "full"}:
+                return "dev"
+            return None
+
     app = TerminalApp()
     app.run()
     if app.attach_command:
-        _attach_until_ctrl_b(app.attach_command)
+        if app.attach_session_id:
+            size = shutil.get_terminal_size(fallback=(120, 34))
+            SessionLifecycle().resize(app.attach_session_id, cols=size.columns, rows=size.lines)
+        _attach_until_ctrl_b(
+            app.attach_command,
+            on_resize=(
+                lambda cols, rows: SessionLifecycle().resize(app.attach_session_id, cols=cols, rows=rows)
+                if app.attach_session_id
+                else None
+            ),
+        )
+        if app.attach_session_id:
+            os.environ["YIKES_RETURN_SESSION_ID"] = app.attach_session_id
         os.execv(sys.executable, [sys.executable, *sys.argv])
     if app.restart_requested:
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
-def _attach_until_ctrl_b(command: list[str]) -> None:
-    def stdin_read(fd: int) -> bytes:
-        data = os.read(fd, 1024)
-        if b"\x02" in data:
-            return b"\x02d"
-        return data
+def _attach_until_ctrl_b(command: list[str], *, on_resize: Callable[[int, int], object] | None = None) -> None:
+    stdin_fd = sys.stdin.fileno()
+    stdout_fd = sys.stdout.fileno()
+    master_fd, slave_fd = pty.openpty()
+    cols, rows = _current_terminal_size(stdout_fd)
+    _set_fd_size(slave_fd, cols=cols, rows=rows)
+    if on_resize is not None:
+        on_resize(cols, rows)
 
-    pty.spawn(command, stdin_read=stdin_read)
+    process = subprocess.Popen(
+        command,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+
+    old_attrs = termios.tcgetattr(stdin_fd) if os.isatty(stdin_fd) else None
+    previous_winch = signal.getsignal(signal.SIGWINCH)
+
+    def resize_child(_signum: int | None = None, _frame: object | None = None) -> None:
+        new_cols, new_rows = _current_terminal_size(stdout_fd)
+        _set_fd_size(master_fd, cols=new_cols, rows=new_rows)
+        if on_resize is not None:
+            on_resize(new_cols, new_rows)
+        try:
+            process.send_signal(signal.SIGWINCH)
+        except OSError:
+            pass
+
+    try:
+        if old_attrs is not None:
+            tty.setraw(stdin_fd)
+        signal.signal(signal.SIGWINCH, resize_child)
+        resize_child()
+        while process.poll() is None:
+            readable, _, _ = select.select([stdin_fd, master_fd], [], [], 0.1)
+            if master_fd in readable:
+                try:
+                    data = os.read(master_fd, 65536)
+                except OSError:
+                    break
+                if not data:
+                    break
+                os.write(stdout_fd, data)
+            if stdin_fd in readable:
+                try:
+                    data = os.read(stdin_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                os.write(master_fd, data.replace(b"\x02", b"\x02d"))
+    finally:
+        if old_attrs is not None:
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attrs)
+        signal.signal(signal.SIGWINCH, previous_winch)
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        else:
+            process.wait()
+
+
+def _current_terminal_size(fd: int) -> tuple[int, int]:
+    try:
+        size = os.get_terminal_size(fd)
+        return max(20, size.columns), max(5, size.lines)
+    except OSError:
+        size = shutil.get_terminal_size(fallback=(120, 34))
+        return max(20, size.columns), max(5, size.lines)
+
+
+def _set_fd_size(fd: int, *, cols: int, rows: int) -> None:
+    winsize = struct.pack("HHHH", rows, cols, 0, 0)
+    try:
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+    except OSError:
+        pass

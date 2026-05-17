@@ -29,6 +29,24 @@ answer = session.prompt("Hello, my name is Michael. How are you doing?")
 
 `Session` currently wraps the in-memory chatbot conversation and is safe to use from a Python web backend. It exposes `id`, `prompt()`, `ask()`, `messages`, `status()`, and slash-command helpers. The later async manager keeps the same mental model but moves ownership into a durable runtime process so sessions survive frontend disconnects.
 
+Terminal-backed sessions also expose an inferred background activity state. This is the same state highlighted in the terminal and web UIs, so embedded apps can show whether Codex or Claude is idle, thinking, streaming output, or waiting for a numbered/approval choice:
+
+```python
+from yikes import ActivityMonitor, classify_terminal_snapshot
+from yikes.app_core import YikesAppController
+
+controller = YikesAppController()
+activity = controller.session_activity().to_json()
+# {"state": "thinking", "label": "thinking", "confidence": 0.78, ...}
+
+monitor = ActivityMonitor()
+activity = monitor.observe("session-id", terminal_snapshot)
+
+quick = classify_terminal_snapshot("Working (3s • esc to interrupt)")
+```
+
+The state is deliberately heuristic for tmux-backed CLIs: yikes! classifies rendered terminal snapshots because Claude Code and Codex CLI do not share a structured prompt-state protocol in interactive mode. The API includes `confidence`, `reason`, and `changed` so callers can visualize uncertainty instead of treating it as a hard semantic event.
+
 Larger target async session surface:
 
 ```python

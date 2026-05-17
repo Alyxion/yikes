@@ -300,6 +300,7 @@ def _settings_from_params(value: object) -> AgentSettings | None:
     return AgentSettings(
         web_search_enabled=bool(value.get("web_search_enabled", True)),
         tmux_enabled=bool(value.get("tmux_enabled", False)),
+        managed_output_enabled=bool(value.get("managed_output_enabled", True)),
         read_roots=tuple(Path(str(path)).expanduser() for path in value.get("read_roots", [])),
         write_roots=tuple(Path(str(path)).expanduser() for path in value.get("write_roots", [])),
         mcp_servers=_mcp_servers_from_params(value.get("mcp_servers", value.get("mcps", []))),

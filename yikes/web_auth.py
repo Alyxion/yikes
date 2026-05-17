@@ -29,8 +29,9 @@ class WebAuthConfig:
         *,
         developer_mode: bool,
         env_path: Path | None = None,
+        persist_auth: bool = True,
     ) -> "WebAuthConfig":
-        if developer_mode:
+        if persist_auth:
             path = _env_path(env_path)
             values = _read_env(path)
             changed = False
@@ -44,12 +45,13 @@ class WebAuthConfig:
                 login_key = secrets.token_urlsafe(32)
                 values["YIKES_WEB_LOGIN_KEY"] = login_key
                 changed = True
-            if values.get("YIKES_WEB_DEV") != "1":
-                values["YIKES_WEB_DEV"] = "1"
+            dev_value = "1" if developer_mode else "0"
+            if values.get("YIKES_WEB_DEV") != dev_value:
+                values["YIKES_WEB_DEV"] = dev_value
                 changed = True
             if changed:
                 _write_env(path, values)
-            return cls(secret=secret, login_key=login_key, developer_mode=True)
+            return cls(secret=secret, login_key=login_key, developer_mode=developer_mode)
 
         return cls(
             secret=secrets.token_urlsafe(48),
@@ -90,7 +92,7 @@ class WebAuthConfig:
         return expires >= int(time.time())
 
 
-def developer_mode_from_env(default: bool = True) -> bool:
+def developer_mode_from_env(default: bool = False) -> bool:
     value = os.environ.get("YIKES_WEB_DEV")
     if value is None:
         return default

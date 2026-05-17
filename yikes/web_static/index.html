@@ -12,10 +12,14 @@
       <aside class="sidebar">
         <div class="brand"><img src="/static/logo.png" alt="yikes!"></div>
         <dl id="status" class="status"></dl>
+        <div id="activity-pill" class="activity-pill activity-unknown">unknown</div>
       </aside>
 
       <main class="workspace">
-        <div id="tabs" class="tabs"></div>
+        <div class="topbar">
+          <div id="tabs" class="tabs"></div>
+          <button id="view-toggle" class="icon-button" type="button" title="Toggle high-level/dev view">{} </button>
+        </div>
         <section id="no-session" class="empty hidden">
           <h1>No active session</h1>
           <p>Create a session to start chatting. Normal text input is disabled until one exists.</p>
@@ -35,9 +39,11 @@
             <div class="browser-toolbar">
               <button id="root-none">No file access</button>
               <button id="root-start">Start dir</button>
+              <button id="root-browse">Choose folder...</button>
+              <button id="root-current" class="hidden">Use current folder</button>
               <span id="browser-path"></span>
             </div>
-            <div id="browser-list" class="browser-list"></div>
+            <div id="browser-list" class="browser-list hidden"></div>
           </div>
           <div class="wizard-actions">
             <button id="wizard-create" class="primary">Create Session</button>

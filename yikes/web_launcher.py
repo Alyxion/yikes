@@ -24,11 +24,12 @@ def launch_web_ui(
     host: str = "127.0.0.1",
     port: int = 8760,
     cwd: Path | None = None,
-    developer_mode: bool = True,
+    developer_mode: bool = False,
+    persistent_auth: bool = True,
     open_browser: bool = True,
 ) -> WebLaunchResult:
     root = (cwd or Path.cwd()).expanduser()
-    auth = WebAuthConfig.load(developer_mode=developer_mode, env_path=root / ".env")
+    auth = WebAuthConfig.load(developer_mode=developer_mode, env_path=root / ".env", persist_auth=persistent_auth)
     started = False
     if not _port_open(host, port):
         env = os.environ.copy()
@@ -47,6 +48,7 @@ def launch_web_ui(
                 "--cwd",
                 str(root),
                 "--dev" if developer_mode else "--no-dev",
+                "--persistent-auth" if persistent_auth else "--ephemeral-auth",
             ],
             cwd=str(root),
             env=env,

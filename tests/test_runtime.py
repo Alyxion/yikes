@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 
 from yikes import (
@@ -20,8 +21,9 @@ from yikes import (
     SessionLifecycle,
     TokenStore,
 )
+from yikes.domain import DriverMode
 from yikes.reaper import reap_by_count
-from yikes.sandbox import SandboxSession
+from yikes.sandbox import SANDBOX_IMAGE_VERSION, SandboxSession
 import yikes.drivers as drivers
 import yikes.sandbox as sandbox_module
 
@@ -64,6 +66,21 @@ def test_durable_session_manager_honors_runtime_store_env(tmp_path: Path, monkey
     )
 
     assert (runtime_store / f"{meta.id}.json").exists()
+
+
+def test_durable_session_manager_can_use_explicit_session_id(tmp_path: Path) -> None:
+    manager = DurableSessionManager(tmp_path)
+
+    meta = manager.create(
+        backend=Backend.CODEX,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket="/tmp/yikes.sock", tmux_session="named"),
+        cwd=tmp_path,
+        session_id="session-explicit",
+    )
+
+    assert meta.id == "session-explicit"
+    assert manager.get("session-explicit") is not None
 
 
 def test_sandbox_manager_persists_config_without_starting_docker(tmp_path: Path) -> None:
@@ -118,6 +135,68 @@ def test_sandbox_run_command_mounts_configured_host_paths(tmp_path: Path) -> Non
     assert f"{tmp_path}:/workspace/project:rw" in cmd
 
 
+def test_sandbox_write_file_creates_parent_directory_and_reports_failures(tmp_path: Path, monkeypatch) -> None:
+    session = SandboxManager(tmp_path).create(SandboxConfig(image="example:latest"))
+    calls: list[dict[str, object]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object):
+        calls.append({"cmd": cmd, **kwargs})
+        return sandbox_module.subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(SandboxSession, "_ensure_running", lambda _self: None)
+    monkeypatch.setattr(sandbox_module.subprocess, "run", fake_run)
+
+    session.write_file("/workspace/home/.codex/version.json", "{}")
+
+    assert calls[0]["input"] == b"{}"
+    command = calls[0]["cmd"]
+    assert command[:5] == ["docker", "exec", "-i", session.container_name, "sh"]
+    assert "mkdir -p /workspace/home/.codex" in command[-1]
+    assert "cat > /workspace/home/.codex/version.json" in command[-1]
+
+
+def test_docker_direct_turn_creates_ephemeral_workspace_before_running(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    class FakeSandbox:
+        id = "abcdef123456"
+
+        def __init__(self) -> None:
+            self.meta = type(
+                "Meta",
+                (),
+                {"user_data": {"workspace": "/workspace/session-abcdef123456"}},
+            )()
+
+        def exec(self, cmd: list[str], **_kwargs: object):
+            calls.append(cmd)
+            if cmd[:2] == ["sh", "-lc"] and "cat /tmp/yikes-result-" in cmd[-1]:
+                return type("Result", (), {"returncode": 0, "stdout": "Hi\n", "stderr": ""})()
+            if cmd[:2] == ["sh", "-lc"] and "cat /tmp/yikes-stderr-" in cmd[-1]:
+                return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        def write_file(self, path: str, content: object) -> None:
+            calls.append(["write_file", path])
+
+    fake = FakeSandbox()
+    monkeypatch.setattr(drivers, "_prepare_container_auth", lambda *_args, **_kwargs: None)
+
+    answer = drivers._ask_inside_sandbox(
+        fake,  # type: ignore[arg-type]
+        "codex",
+        "Say hi",
+        timeout=5,
+        model=None,
+        settings=AgentSettings(),
+    )
+
+    assert answer == "Hi"
+    assert ["sh", "-lc", "mkdir -p /workspace/session-abcdef123456"] in calls
+    run_call = next(call for call in calls if call[:2] == ["sh", "-lc"] and "codex exec" in call[-1])
+    assert run_call[-1].startswith("cd /workspace/session-abcdef123456 && ")
+
+
 def test_sandbox_start_reports_docker_stderr(tmp_path: Path, monkeypatch) -> None:
     session = SandboxManager(tmp_path).create(SandboxConfig(image="example:latest"))
 
@@ -159,6 +238,34 @@ def test_default_image_build_uses_checked_in_dockerfile(monkeypatch) -> None:
     assert str(sandbox_module.DEFAULT_DOCKERFILE) in calls[0]
 
 
+def test_default_sandbox_image_rebuilds_when_version_label_is_stale(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object):
+        return sandbox_module.subprocess.CompletedProcess(cmd, 0, stdout="old-version\n", stderr="")
+
+    monkeypatch.setattr(sandbox_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(sandbox_module, "_run_docker", lambda cmd, **_kwargs: calls.append(cmd))
+
+    sandbox_module.ensure_image(sandbox_module.DEFAULT_IMAGE)
+
+    assert any(call[:2] == ["docker", "build"] for call in calls)
+
+
+def test_default_sandbox_image_reuses_current_version_label(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object):
+        return sandbox_module.subprocess.CompletedProcess(cmd, 0, stdout=f"{SANDBOX_IMAGE_VERSION}\n", stderr="")
+
+    monkeypatch.setattr(sandbox_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(sandbox_module, "_run_docker", lambda cmd, **_kwargs: calls.append(cmd))
+
+    sandbox_module.ensure_image(sandbox_module.DEFAULT_IMAGE)
+
+    assert not any(call[:2] == ["docker", "build"] for call in calls)
+
+
 def test_session_inventory_lists_tmux_and_docker_sessions(tmp_path: Path, monkeypatch) -> None:
     runtime_store = tmp_path / "runtime"
     sandbox_store = tmp_path / "sandboxes"
@@ -177,6 +284,65 @@ def test_session_inventory_lists_tmux_and_docker_sessions(tmp_path: Path, monkey
     assert "tmux/claude" in text
     assert "docker/codex running" in text
     assert sandbox.container_name in text
+
+
+def test_session_inventory_marks_running_docker_with_dead_tmux_as_dead(tmp_path: Path, monkeypatch) -> None:
+    sandbox_store = tmp_path / "sandboxes"
+    sandbox = SandboxManager(sandbox_store).create(
+        user_data={
+            "backend": "codex",
+            "tmux_socket": "/workspace/yikes-tmux.sock",
+            "tmux_session": "yikes-codex",
+        }
+    )
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "no server running on /workspace/yikes-tmux.sock"
+
+    monkeypatch.setattr(SandboxSession, "is_running", lambda _self: True)
+    monkeypatch.setattr("yikes.session_inventory.subprocess.run", lambda *_args, **_kwargs: Result())
+
+    rows = SessionInventory(runtime_store=tmp_path / "runtime", sandbox_store=sandbox_store).list()
+
+    assert {row.id: row.state for row in rows}[sandbox.id] == "dead"
+
+
+def test_session_inventory_marks_missing_tmux_sessions_dead(tmp_path: Path) -> None:
+    runtime_store = tmp_path / "runtime"
+    sandbox_store = tmp_path / "sandboxes"
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CODEX,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket=str(tmp_path / "missing.sock"), tmux_session="gone"),
+        cwd=tmp_path,
+    )
+
+    rows = SessionInventory(runtime_store=runtime_store, sandbox_store=sandbox_store).list()
+
+    assert {row.id: row.state for row in rows}[meta.id] == "dead"
+
+
+def test_session_inventory_does_not_mark_permission_denied_tmux_dead(tmp_path: Path, monkeypatch) -> None:
+    runtime_store = tmp_path / "runtime"
+    sandbox_store = tmp_path / "sandboxes"
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CODEX,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket=str(tmp_path / "restricted.sock"), tmux_session="live"),
+        cwd=tmp_path,
+    )
+
+    class Result:
+        returncode = 1
+        stderr = "error connecting to socket (Operation not permitted)"
+
+    monkeypatch.setattr("yikes.session_inventory.subprocess.run", lambda *_args, **_kwargs: Result())
+
+    rows = SessionInventory(runtime_store=runtime_store, sandbox_store=sandbox_store).list()
+
+    assert {row.id: row.state for row in rows}[meta.id] == "created"
 
 
 def test_session_lifecycle_closes_docker_session(tmp_path: Path, monkeypatch) -> None:
@@ -284,6 +450,58 @@ def test_session_lifecycle_snapshots_tmux_history(tmp_path: Path, monkeypatch) -
     ]
 
 
+def test_session_lifecycle_auto_accepts_generated_codex_trust_prompt(tmp_path: Path, monkeypatch) -> None:
+    runtime_store = tmp_path / "runtime"
+    generated = Path(tempfile.mkdtemp(prefix="yikes-debug-", dir=tempfile.gettempdir()))
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CODEX,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket="/tmp/yikes.sock", tmux_session="s1"),
+        cwd=generated,
+        user_data={"cwd_explicit": "false"},
+    )
+    calls: list[list[str]] = []
+    captures = [
+        "> You are in /tmp/yikes-debug-x\n\nDo you trust the contents of this directory?\n\n› 1. Yes, continue\n  2. No, quit",
+        "codex ready",
+    ]
+
+    def fake_run(cmd: list[str], **_kwargs: object):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stdout = captures.pop(0) if "capture-pane" in cmd else ""
+
+        return Result()
+
+    monkeypatch.setattr("yikes.session_inventory.subprocess.run", fake_run)
+
+    text = SessionLifecycle(runtime_store=runtime_store, sandbox_store=tmp_path / "sandboxes").snapshot(meta.id)
+
+    assert text == "codex ready"
+    assert any(call[-1] == "Enter" for call in calls)
+
+
+def test_session_lifecycle_returns_persisted_capture_markers(tmp_path: Path) -> None:
+    runtime_store = tmp_path / "runtime"
+    sandbox_store = tmp_path / "sandboxes"
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CLAUDE,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket="/tmp/yikes.sock", tmux_session="s1"),
+        cwd=tmp_path,
+        user_data={"capture_start": "@@@@/abc", "capture_end": "/@@@@/abc"},
+    )
+    sandbox = SandboxManager(sandbox_store).create(
+        user_data={"capture_start": "TEXT_BEGIN_old", "capture_end": "TEXT_END_old"}
+    )
+    lifecycle = SessionLifecycle(runtime_store=runtime_store, sandbox_store=sandbox_store)
+
+    assert lifecycle.capture_markers(meta.id) == (("@@@@/abc", "/@@@@/abc"),)
+    assert lifecycle.capture_markers(sandbox.id) == (("TEXT_BEGIN_old", "TEXT_END_old"),)
+
+
 def test_session_lifecycle_returns_attach_commands_for_tmux_and_docker_tmux(tmp_path: Path) -> None:
     runtime_store = tmp_path / "runtime"
     sandbox_store = tmp_path / "sandboxes"
@@ -294,12 +512,58 @@ def test_session_lifecycle_returns_attach_commands_for_tmux_and_docker_tmux(tmp_
         cwd=tmp_path,
     )
     sandbox = SandboxManager(sandbox_store).create(
-        user_data={"backend": "codex", "tmux_socket": "/workspace/yikes.sock", "tmux_session": "yikes-codex"}
+        user_data={
+            "backend": "codex",
+            "logical_session_id": "logical-docker-session",
+            "tmux_socket": "/workspace/yikes.sock",
+            "tmux_session": "yikes-codex",
+        }
     )
     lifecycle = SessionLifecycle(runtime_store=runtime_store, sandbox_store=sandbox_store)
 
     assert lifecycle.attach_command(meta.id) == ["tmux", "-S", "/tmp/yikes.sock", "attach", "-t", "s1"]
-    assert lifecycle.attach_command(sandbox.id) == [
+    assert lifecycle.resolve_session_id("logical-docker-session") == sandbox.id
+    assert lifecycle.attach_command("logical-docker-session") == [
+        "docker",
+        "exec",
+        "-it",
+        sandbox.container_name,
+        "tmux",
+        "-S",
+        "/workspace/yikes.sock",
+        "attach",
+        "-t",
+        "yikes-codex",
+    ]
+
+
+def test_session_inventory_displays_logical_id_for_docker_sessions(tmp_path: Path, monkeypatch) -> None:
+    sandbox_store = tmp_path / "sandboxes"
+    sandbox = SandboxManager(sandbox_store).create(
+        user_data={"backend": "codex", "logical_session_id": "logical-docker-session"}
+    )
+    monkeypatch.setattr(SandboxSession, "is_running", lambda _self: True)
+
+    rows = SessionInventory(runtime_store=tmp_path / "runtime", sandbox_store=sandbox_store).list()
+
+    assert rows[0].id == "logical-docker-session"
+    assert sandbox.id in rows[0].detail
+
+
+def test_session_lifecycle_resolves_legacy_docker_tmux_label_prefix(tmp_path: Path) -> None:
+    sandbox_store = tmp_path / "sandboxes"
+    sandbox = SandboxManager(sandbox_store).create(
+        user_data={
+            "backend": "codex",
+            "label": "docker-tmux-codex-abcdef123456",
+            "tmux_socket": "/workspace/yikes.sock",
+            "tmux_session": "yikes-codex",
+        }
+    )
+    lifecycle = SessionLifecycle(runtime_store=tmp_path / "runtime", sandbox_store=sandbox_store)
+
+    assert lifecycle.resolve_session_id("abcdef1234567890") == sandbox.id
+    assert lifecycle.attach_command("abcdef1234567890") == [
         "docker",
         "exec",
         "-it",
@@ -339,6 +603,38 @@ def test_session_lifecycle_sends_keys_to_tmux(tmp_path: Path, monkeypatch) -> No
 
     assert result.closed is True
     assert calls == [["tmux", "-S", "/tmp/yikes.sock", "send-keys", "-t", "s1", "Down"]]
+
+
+def test_session_lifecycle_resizes_tmux_window(tmp_path: Path, monkeypatch) -> None:
+    runtime_store = tmp_path / "runtime"
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CLAUDE,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket="/tmp/yikes.sock", tmux_session="s1"),
+        cwd=tmp_path,
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr("yikes.session_inventory.subprocess.run", fake_run)
+
+    result = SessionLifecycle(runtime_store=runtime_store, sandbox_store=tmp_path / "sandboxes").resize(
+        meta.id,
+        cols=180,
+        rows=52,
+    )
+
+    assert result.closed is True
+    assert calls == [["tmux", "-S", "/tmp/yikes.sock", "resize-window", "-x", "180", "-y", "52", "-t", "s1"]]
 
 
 def test_session_lifecycle_pastes_text_to_tmux(tmp_path: Path, monkeypatch) -> None:
@@ -385,11 +681,64 @@ def test_docker_tmux_without_explicit_cwd_uses_container_workspace(tmp_path: Pat
 
     assert sandbox.meta.config.mounts == ()
     assert sandbox.meta.user_data["workspace"] == "/workspace/session-abcdef123456"
+    assert sandbox.meta.user_data["logical_session_id"] == "abcdef1234567890"
     assert sandbox.meta.user_data["server_port"] == "8989"
+    assert sandbox.meta.user_data["managed_output_enabled"] == "true"
     assert "YIKES_SERVER_TOKEN" in sandbox.meta.config.secret_env
     assert settings.read_roots == (Path("/workspace/session-abcdef123456"),)
     assert settings.write_roots == (Path("/workspace/session-abcdef123456"),)
     assert settings.tmux_enabled is True
+
+
+def test_docker_sessions_with_explicit_cwd_are_unique_per_logical_session(tmp_path: Path, monkeypatch) -> None:
+    sandbox_store = tmp_path / "sandboxes"
+    monkeypatch.setattr(drivers, "SandboxManager", lambda: SandboxManager(sandbox_store))
+
+    first, _settings = drivers._docker_session_for(
+        "codex",
+        tmp_path,
+        AgentSettings(tmux_enabled=True),
+        cwd_explicit=True,
+        session_id="1111111111111111",
+        use_tmux=True,
+    )
+    second, _settings = drivers._docker_session_for(
+        "codex",
+        tmp_path,
+        AgentSettings(tmux_enabled=True),
+        cwd_explicit=True,
+        session_id="2222222222222222",
+        use_tmux=True,
+    )
+
+    assert first.id != second.id
+    assert first.meta.user_data["label"] == "docker-tmux-codex-111111111111"
+    assert second.meta.user_data["label"] == "docker-tmux-codex-222222222222"
+
+
+def test_docker_tmux_switch_restores_unmanaged_output_mode(tmp_path: Path, monkeypatch) -> None:
+    sandbox_store = tmp_path / "sandboxes"
+    monkeypatch.setattr(drivers, "SandboxManager", lambda: SandboxManager(sandbox_store))
+    sandbox, _settings = drivers._docker_session_for(
+        "codex",
+        tmp_path,
+        AgentSettings(tmux_enabled=True, managed_output_enabled=False),
+        cwd_explicit=True,
+        session_id="3333333333333333",
+        use_tmux=True,
+    )
+    sandbox.meta.user_data["tmux_socket"] = "/workspace/yikes.sock"
+    sandbox.meta.user_data["tmux_session"] = "yikes"
+    sandbox._save()
+
+    options = SessionLifecycle(runtime_store=tmp_path / "runtime", sandbox_store=sandbox_store).switch_options(
+        ChatOptions(Backend.CODEX, Driver.DOCKER, tmp_path),
+        sandbox.id,
+    )
+
+    assert options is not None
+    assert options.mode is DriverMode.TMUX
+    assert options.settings.managed_output_enabled is False
 
 
 def test_docker_cli_without_explicit_cwd_does_not_mount_host_directory(tmp_path: Path, monkeypatch) -> None:
@@ -407,6 +756,7 @@ def test_docker_cli_without_explicit_cwd_does_not_mount_host_directory(tmp_path:
 
     assert sandbox.meta.config.mounts == ()
     assert sandbox.meta.user_data["workspace"] == "/workspace/session-fedcba987654"
+    assert sandbox.meta.user_data["logical_session_id"] == "fedcba9876543210"
     assert sandbox.meta.user_data["server_port"] == "8989"
     assert "YIKES_SERVER_TOKEN" in sandbox.meta.config.secret_env
     assert settings.read_roots == (Path("/workspace/session-fedcba987654"),)

@@ -56,7 +56,8 @@ def test_conversation_keeps_history_for_later_frontends() -> None:
     assert "Assistant: I am doing well." in prompt
 
 
-def test_tmux_conversation_uses_native_session_history_prompt() -> None:
+def test_tmux_conversation_uses_native_session_history_prompt(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("YIKES_PROMPT_PROFILE_PATH", str(tmp_path / "prompt-profile.json"))
     transport = CaptureTransport()
     conversation = ChatService().create_conversation(
         Backend.CLAUDE,
@@ -70,6 +71,42 @@ def test_tmux_conversation_uses_native_session_history_prompt() -> None:
     assert "Say OK only." in transport.prompts[0]
     assert "Assistant:" not in transport.prompts[0]
     assert "tmux UI transport: enabled" in transport.prompts[0]
+
+
+def test_tmux_conversation_ordinary_turn_uses_session_history_without_full_setup(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("YIKES_PROMPT_PROFILE_PATH", str(tmp_path / "prompt-profile.json"))
+    transport = CaptureTransport()
+    conversation = ChatService().create_conversation(
+        Backend.CLAUDE,
+        Driver.TMUX,
+        cwd=Path.cwd(),
+        transport=transport,
+    )
+
+    conversation.ask("Remember this.")
+    conversation.ask("Now answer briefly.")
+
+    assert transport.prompts[1] == "Now answer briefly."
+    assert "Runtime configuration" not in transport.prompts[1]
+    assert "tmux UI transport" not in transport.prompts[1]
+    assert "yikes" not in transport.prompts[1].lower()
+
+
+def test_tmux_conversation_can_disable_managed_output_gate(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("YIKES_PROMPT_PROFILE_PATH", str(tmp_path / "prompt-profile.json"))
+    transport = CaptureTransport()
+    conversation = ChatService().create_conversation(
+        Backend.CLAUDE,
+        Driver.TMUX,
+        cwd=Path.cwd(),
+        settings=AgentSettings(managed_output_enabled=False),
+        transport=transport,
+    )
+
+    conversation.ask("Use the native UI normally.")
+
+    assert transport.prompts == ["Use the native UI normally."]
+    assert "Runtime configuration" not in transport.prompts[0]
 
 
 def test_session_facade_is_easy_to_embed_from_python() -> None:
@@ -114,6 +151,22 @@ def test_docker_tmux_without_cwd_keeps_container_workspace_implicit() -> None:
     assert conversation.options.session_id
 
 
+def test_start_new_can_keep_generated_workspace_implicit(tmp_path) -> None:
+    conversation = ChatService().create_conversation(
+        Backend.CODEX,
+        Driver.TMUX,
+        cwd=tmp_path,
+        transport=FakeTransport(),
+    )
+    generated = tmp_path / "generated"
+    generated.mkdir()
+
+    conversation.start_new(cwd=generated, cwd_explicit=False)
+
+    assert conversation.options.cwd == generated
+    assert conversation.options.cwd_explicit is False
+
+
 def test_service_preserves_explicit_remote_control_for_integration_slots() -> None:
     conversation = ChatService().create_conversation(
         Backend.CODEX,
@@ -146,7 +199,7 @@ def test_slash_commands_are_handled_locally() -> None:
     assert "sonnet (current)" in conversation.handle_slash_command("/models")
     assert conversation.handle_slash_command("/backend") == "Backend: claude"
     old_session_id = conversation.options.session_id
-    assert conversation.handle_slash_command("/new") == "Started new session."
+    assert conversation.handle_slash_command("/new").startswith("New session: claude on host via cli;")
     assert conversation.options.session_id != old_session_id
     assert conversation.handle_slash_command("/driver tmux") == "Driver set to tmux."
     assert conversation.options.driver is Driver.TMUX
@@ -168,9 +221,12 @@ def test_slash_commands_are_handled_locally() -> None:
     assert "driver: cli" in status
     assert "complexity: high" in status
     assert "web: enabled" in status
+    assert "capture: disabled" in status
     restart_result = conversation.run_slash_command("/restart")
     assert restart_result.message == "Restarting yikes..."
     assert restart_result.restart_requested is True
+    assert conversation.handle_slash_command("/full") == "Fullscreen tmux attach is available in the terminal UI."
+    assert conversation.handle_slash_command("/mod").startswith("Unknown command: /mod.")
     assert conversation.handle_slash_command("/clear") == "Conversation cleared."
 
 
@@ -213,6 +269,9 @@ def test_slash_command_suggestions_come_from_registry() -> None:
     web_suggestions = conversation.slash_suggestions("/web o")
     assert {suggestion.completion for suggestion in web_suggestions} == {"/web", "/web on", "/web off"}
 
+    capture_suggestions = conversation.slash_suggestions("/capture o")
+    assert {suggestion.completion for suggestion in capture_suggestions} == {"/capture on", "/capture off"}
+
     models_preview = conversation.slash_suggestions("/models")
     assert {suggestion.value for suggestion in models_preview} >= {"default", "sonnet", "opus", "haiku"}
 
@@ -230,6 +289,10 @@ def test_runtime_settings_are_configurable_through_slash_commands(tmp_path) -> N
 
     assert conversation.handle_slash_command("/web off") == "Web search disabled."
     assert conversation.options.settings.web_search_enabled is False
+    assert conversation.handle_slash_command("/capture off") == "Answer capture disabled."
+    assert conversation.options.settings.managed_output_enabled is False
+    assert conversation.handle_slash_command("/capture on") == "Answer capture enabled."
+    assert conversation.options.settings.managed_output_enabled is True
     assert conversation.handle_slash_command(f"/dirs read add {read_root}") == f"Read directory added: {read_root}"
     assert conversation.handle_slash_command(f"/dirs write add {write_root}") == f"Write directory added: {write_root}"
     assert conversation.options.settings.read_roots == (read_root,)

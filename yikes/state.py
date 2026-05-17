@@ -98,6 +98,7 @@ def _parse_settings(value: object) -> AgentSettings:
     return AgentSettings(
         web_search_enabled=_parse_bool(value.get("web_search_enabled"), True),
         tmux_enabled=_parse_bool(value.get("tmux_enabled"), False),
+        managed_output_enabled=_parse_bool(value.get("managed_output_enabled"), True),
         read_roots=_parse_paths(value.get("read_roots")),
         write_roots=_parse_paths(value.get("write_roots")),
         mcp_servers=_parse_mcps(value.get("mcp_servers")),
@@ -108,6 +109,7 @@ def _settings_to_json(settings: AgentSettings) -> dict[str, object]:
     return {
         "web_search_enabled": settings.web_search_enabled,
         "tmux_enabled": settings.tmux_enabled,
+        "managed_output_enabled": settings.managed_output_enabled,
         "read_roots": [str(path) for path in settings.read_roots],
         "write_roots": [str(path) for path in settings.write_roots],
         "mcp_servers": [

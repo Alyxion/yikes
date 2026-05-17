@@ -109,6 +109,8 @@ Inside the terminal UI, the same capabilities are exposed without making users r
 - `/paste <text>` loads text into a tmux buffer and pastes it into the selected session.
 - `/view extracted` shows yikes!' parsed answer; `/view full` shows captured terminal output when a backing tmux session can be resolved.
 - `/term` opens an interactive terminal attach to the tmux session.
+
+Developer diagnostics are opt-in. Setting `YIKES_DEVELOPER_MODE=1` or `YIKES_TMUX_IO_LOG=1` enables a bounded JSONL ring buffer under `~/.yikes/debug/tmux-io` that records tmux paste input, key input, resize control events, and captured output. The logger is size-limited per file and across the directory, so it can be left on briefly while reproducing UI/session recovery bugs without growing indefinitely.
 - `/fullscreen` overtakes the session with the same interactive attach while hiding the yikes! composer/sidebar. While attached, all input goes directly to Claude/Codex except `Ctrl-b`, which yikes! reserves as the return-to-yikes escape.
 
 The fullscreen escape intentionally avoids double-Escape. Escape is not a safe global escape hatch in terminal applications because cursor keys and many application-level shortcuts are encoded as escape sequences. Browser and CLI attach surfaces also show a visible return control where the UI allows it.

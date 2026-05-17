@@ -16,6 +16,7 @@ def test_app_state_round_trips_last_terminal_choices(tmp_path) -> None:
             complexity=Complexity.HIGH,
             settings=AgentSettings(
                 web_search_enabled=False,
+                managed_output_enabled=False,
                 read_roots=(tmp_path / "read",),
                 write_roots=(tmp_path / "write",),
                 mcp_servers=(McpServer("fs", "python", ("-m", "server")),),
@@ -31,6 +32,7 @@ def test_app_state_round_trips_last_terminal_choices(tmp_path) -> None:
     assert restored.model == "gpt-5.5"
     assert restored.complexity is Complexity.HIGH
     assert restored.settings.web_search_enabled is False
+    assert restored.settings.managed_output_enabled is False
     assert restored.settings.read_roots == (tmp_path / "read",)
     assert restored.settings.write_roots == (tmp_path / "write",)
     assert restored.settings.mcp_servers == (McpServer("fs", "python", ("-m", "server")),)

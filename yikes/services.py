@@ -30,6 +30,7 @@ from .domain import (
     MessageRole,
 )
 from .drivers import ask_backend
+from .prompt_profile import load_prompt_profile
 
 
 class ChatTransport(Protocol):
@@ -62,8 +63,13 @@ class Conversation:
     driver_registry: DriverRegistry = field(default_factory=default_driver_registry)
 
     def ask(self, text: str, attachments: tuple[ImageAttachment, ...] = ()) -> str:
+        setup_turn = self._should_refresh_interactive_guidance()
         self.messages.append(Message(MessageRole.USER, text))
-        prompt = self.render_interactive_prompt(text) if self._uses_native_session_history() else self.render_prompt()
+        prompt = (
+            self.render_interactive_prompt(text, include_setup=setup_turn)
+            if self._uses_native_session_history()
+            else self.render_prompt()
+        )
         answer = self._ask_transport(prompt, attachments).strip()
         self.messages.append(Message(MessageRole.ASSISTANT, answer))
         return answer
@@ -77,11 +83,11 @@ class Conversation:
     def clear(self) -> None:
         self.messages.clear()
 
-    def start_new(self, *, cwd: Path | None = None) -> None:
+    def start_new(self, *, cwd: Path | None = None, cwd_explicit: bool = True) -> None:
         self.messages.clear()
         options = self.options.with_session_id(uuid4().hex)
         if cwd is not None:
-            options = options.with_cwd(cwd)
+            options = options.with_cwd(cwd, explicit=cwd_explicit)
         self.options = options
 
     def set_model(self, model: str | None) -> None:
@@ -103,15 +109,17 @@ class Conversation:
             raise ValueError("Remote runtime is planned for remote machines, but is not supported yet.")
         if selected is ExecutionLocation.HOST:
             driver = Driver.TMUX if mode is DriverMode.TMUX else Driver.DIRECT
-            self.options = self.options.with_driver(driver).with_settings(
-                self.options.settings.with_tmux(False)
-            )
+            settings = self.options.settings.with_tmux(False)
+            if mode is DriverMode.TMUX:
+                settings = settings.with_managed_output(False)
+            self.options = self.options.with_driver(driver).with_settings(settings)
             return
         if mode is DriverMode.API:
             raise ValueError("API driver mode is not supported yet.")
-        self.options = self.options.with_driver(Driver.DOCKER).with_settings(
-            self.options.settings.with_tmux(mode is DriverMode.TMUX)
-        )
+        settings = self.options.settings.with_tmux(mode is DriverMode.TMUX)
+        if mode is DriverMode.TMUX:
+            settings = settings.with_managed_output(False)
+        self.options = self.options.with_driver(Driver.DOCKER).with_settings(settings)
 
     def set_driver_mode(self, mode: DriverMode | str) -> None:
         selected = DriverMode(mode)
@@ -121,14 +129,18 @@ class Conversation:
         if location is ExecutionLocation.REMOTE:
             raise ValueError("Remote runtime is planned for remote machines, but is not supported yet.")
         if location is ExecutionLocation.DOCKER:
+            settings = self.options.settings.with_tmux(selected is DriverMode.TMUX)
+            if selected is DriverMode.TMUX:
+                settings = settings.with_managed_output(False)
             self.options = self.options.with_driver(Driver.DOCKER).with_settings(
-                self.options.settings.with_tmux(selected is DriverMode.TMUX)
+                settings
             )
             return
         driver = Driver.TMUX if selected is DriverMode.TMUX else Driver.DIRECT
-        self.options = self.options.with_driver(driver).with_settings(
-            self.options.settings.with_tmux(False)
-        )
+        settings = self.options.settings.with_tmux(False)
+        if selected is DriverMode.TMUX:
+            settings = settings.with_managed_output(False)
+        self.options = self.options.with_driver(driver).with_settings(settings)
 
     def set_complexity(self, complexity: Complexity | str) -> None:
         self.options = self.options.with_complexity(Complexity(complexity))
@@ -176,6 +188,7 @@ class Conversation:
             "model": self.options.model or "(default)",
             "complexity": self.options.complexity.value,
             "web": "enabled" if settings.web_search_enabled else "disabled",
+            "capture": "enabled" if settings.managed_output_enabled else "disabled",
             "read_roots": str(len(settings.read_roots)),
             "write_roots": str(len(settings.write_roots)),
             "mcps": str(len(settings.mcp_servers)),
@@ -190,6 +203,10 @@ class Conversation:
 
     def slash_suggestions(self, raw: str) -> list[CommandSuggestion]:
         return self.command_registry.suggestions(raw, self, self.model_registry, self.driver_registry)
+
+    def resolve_slash_command(self, raw: str) -> str | None:
+        token, _arg = self.command_registry._parse(raw)
+        return self.command_registry.resolve_name(token)
 
     def render_prompt(self) -> str:
         turns: list[str] = []
@@ -207,13 +224,10 @@ class Conversation:
             f"{transcript}\nAssistant:"
         )
 
-    def render_interactive_prompt(self, text: str) -> str:
-        return (
-            "You are a concise chatbot. Follow the latest user instruction exactly. "
-            "When asked for a name as a single word, output only that name.\n\n"
-            f"{self._render_settings_prompt()}\n\n"
-            f"{text}"
-        )
+    def render_interactive_prompt(self, text: str, *, include_setup: bool = True) -> str:
+        if not include_setup:
+            return text
+        return f"{self._interactive_setup_prompt()}\n\n{self._render_settings_prompt()}\n\n{text}"
 
     def _render_settings_prompt(self) -> str:
         settings = self.options.settings
@@ -225,10 +239,12 @@ class Conversation:
         ) or "(none attached)"
         web = "enabled" if settings.web_search_enabled else "disabled"
         tmux = "enabled" if self.options.driver is Driver.TMUX or settings.tmux_enabled else "disabled"
+        capture = "enabled" if settings.managed_output_enabled else "disabled"
         return (
             "Runtime configuration:\n"
             f"- Web search: {web}.\n"
             f"- tmux UI transport: {tmux}.\n"
+            f"- Answer capture: {capture}.\n"
             f"- Allowed read directories: {read_roots}.\n"
             f"- Allowed write directories: {write_roots}.\n"
             f"- Attached MCP servers: {mcps}.\n"
@@ -239,6 +255,17 @@ class Conversation:
         return self.options.driver is Driver.TMUX or (
             self.options.driver is Driver.DOCKER and self.options.settings.tmux_enabled
         )
+
+    def _should_refresh_interactive_guidance(self) -> bool:
+        if not self.options.settings.managed_output_enabled:
+            return False
+        if not self._uses_native_session_history():
+            return True
+        user_turns = sum(1 for message in self.messages if message.role is MessageRole.USER)
+        return user_turns == 0 or user_turns > 0 and user_turns % 12 == 0
+
+    def _interactive_setup_prompt(self) -> str:
+        return load_prompt_profile().setup_for(self.options.session_id)
 
 
 @dataclass
