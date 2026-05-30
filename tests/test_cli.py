@@ -422,6 +422,19 @@ def test_close_all_yes_skips_prompt(tmp_path, monkeypatch) -> None:
     assert DurableSessionManager(tmp_path / "sessions").get(sid) is None
 
 
+def test_relaunch_tui_argv_returns_to_dashboard(monkeypatch) -> None:
+    import yikes.tui as tui
+
+    monkeypatch.setattr(tui.sys, "argv", ["/bin/yikes"])  # bare yikes -> must force tui, not menu
+    assert tui._relaunch_tui_argv()[2:] == ["tui"]
+
+    monkeypatch.setattr(tui.sys, "argv", ["/bin/yikes", "menu"])
+    assert tui._relaunch_tui_argv()[2:] == ["tui"]
+
+    monkeypatch.setattr(tui.sys, "argv", ["/bin/yikes", "tui", "--backend", "codex"])
+    assert tui._relaunch_tui_argv()[2:] == ["tui", "--backend", "codex"]
+
+
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     def fake_run_tui(**_kwargs: object) -> None:
         raise AssertionError("run_tui should not be called")

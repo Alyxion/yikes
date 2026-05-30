@@ -1131,9 +1131,22 @@ def run_tui(
         )
         if app.attach_session_id:
             os.environ["YIKES_RETURN_SESSION_ID"] = app.attach_session_id
-        os.execv(sys.executable, [sys.executable, *sys.argv])
+        os.execv(sys.executable, _relaunch_tui_argv())
     if app.restart_requested:
-        os.execv(sys.executable, [sys.executable, *sys.argv])
+        os.execv(sys.executable, _relaunch_tui_argv())
+
+
+def _relaunch_tui_argv() -> list[str]:
+    """Argv to re-enter the dashboard after fullscreen/restart.
+
+    Always relaunch the `tui` command — re-using the original argv would route
+    bare `yikes` through the start chooser instead of back to the dashboard.
+    Explicit `tui` flags from the original invocation are preserved.
+    """
+    args = sys.argv[1:]
+    if args and args[0] == "tui":
+        return [sys.executable, sys.argv[0], *args]
+    return [sys.executable, sys.argv[0], "tui"]
 
 
 def _attach_until_ctrl_b(command: list[str], *, on_resize: Callable[[int, int], object] | None = None) -> None:
