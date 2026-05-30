@@ -239,6 +239,7 @@ def test_confirm_new_session_keeps_existing_session_as_separate_tab(tmp_path: Pa
         runtime=RuntimeRef(RuntimeKind.DIRECT),
         cwd=tmp_path,
     )
+    monkeypatch.setattr("yikes.app_core.ensure_interactive_session", lambda *a, **k: None)
     controller = YikesAppController(cwd=tmp_path, transport=EchoTransport())
 
     controller.open_new_session()

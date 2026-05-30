@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -244,7 +245,8 @@ class SandboxSession:
 
 class SandboxManager:
     def __init__(self, store_dir: Path | None = None) -> None:
-        self.store_dir = (store_dir or DEFAULT_SANDBOX_STORE).expanduser()
+        configured = store_dir or Path(os.environ.get("YIKES_SANDBOX_STORE", str(DEFAULT_SANDBOX_STORE)))
+        self.store_dir = configured.expanduser()
         self.store_dir.mkdir(parents=True, exist_ok=True)
 
     def create(self, config: SandboxConfig | None = None, *, user_data: dict[str, str] | None = None) -> SandboxSession:
