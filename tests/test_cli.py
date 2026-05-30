@@ -311,6 +311,48 @@ def test_setup_keeps_existing_agents_md(tmp_path, monkeypatch) -> None:
     assert (tmp_path / "AGENTS.md").read_text() == "KEEP ME"
 
 
+def test_setup_asks_for_backend_when_both_present(tmp_path, monkeypatch) -> None:
+    import yikes.drivers
+
+    monkeypatch.setattr(cli, "_available_backends", lambda: [Backend.CLAUDE, Backend.CODEX])
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+    # backend choice -> codex, project question -> skip, write confirm -> yes
+    answers = iter(["2", "", "y"])
+    monkeypatch.setattr("builtins.input", lambda *_a: next(answers))
+    used: dict[str, object] = {}
+
+    def fake_ask(backend, *a, **k):
+        used["backend"] = backend
+        return '{"ports": [], "backend": null, "summary": "x", "notes": "y"}'
+
+    monkeypatch.setattr(yikes.drivers, "ask_backend", fake_ask)
+
+    assert cli.main(["setup", "--cwd", str(tmp_path)]) == 0
+    assert used["backend"] == Backend.CODEX
+
+
+def test_setup_uses_sole_backend_without_asking(tmp_path, monkeypatch) -> None:
+    import yikes.drivers
+
+    monkeypatch.setattr(cli, "_available_backends", lambda: [Backend.CODEX])
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+
+    def boom(*_a):
+        raise AssertionError("should not ask when only one backend is installed")
+
+    monkeypatch.setattr("builtins.input", boom)
+    used: dict[str, object] = {}
+
+    def fake_ask(backend, *a, **k):
+        used["backend"] = backend
+        return '{"ports": [], "backend": null, "summary": "x", "notes": "y"}'
+
+    monkeypatch.setattr(yikes.drivers, "ask_backend", fake_ask)
+
+    assert cli.main(["setup", "--cwd", str(tmp_path), "--yes"]) == 0
+    assert used["backend"] == Backend.CODEX
+
+
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     def fake_run_tui(**_kwargs: object) -> None:
         raise AssertionError("run_tui should not be called")

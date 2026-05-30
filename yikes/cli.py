@@ -201,7 +201,7 @@ if typer:
         from .project_config import load_project_config
 
         project_dir = (cwd or Path.cwd()).expanduser()
-        resolved_backend = backend or _config_backend(load_project_config(project_dir)) or Backend.CLAUDE
+        resolved_backend = _resolve_setup_backend(backend, _config_backend(load_project_config(project_dir)))
         if not _run_setup(resolved_backend, project_dir, assume_yes=yes, goal=message):
             raise typer.Exit(1)
 
@@ -671,6 +671,36 @@ def _config_backend(config: object) -> Backend | None:
         return Backend(value) if value else None
     except ValueError:
         return None
+
+
+def _available_backends() -> list[Backend]:
+    import shutil
+
+    return [backend for backend in (Backend.CLAUDE, Backend.CODEX) if shutil.which(backend.value)]
+
+
+def _resolve_setup_backend(explicit: Backend | None, config_backend: Backend | None) -> Backend:
+    """Pick the backend for `yikes setup` without assuming claude.
+
+    An explicit ``-b`` or a project's configured backend wins. Otherwise use the
+    only installed backend, and when both claude and codex are present, ask.
+    """
+    if explicit is not None:
+        return explicit
+    if config_backend is not None:
+        return config_backend
+    available = _available_backends()
+    if len(available) == 1:
+        return available[0]
+    if len(available) >= 2 and sys.stdin.isatty():
+        typer.echo("Both claude and codex are installed — which should set up this project?")
+        typer.echo("  [1] claude")
+        typer.echo("  [2] codex")
+        choice = input("> ").strip().lower()
+        if choice in ("2", "codex", "x"):
+            return Backend.CODEX
+        return Backend.CLAUDE
+    return available[0] if available else Backend.CLAUDE
 
 
 @contextlib.contextmanager

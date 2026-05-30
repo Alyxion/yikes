@@ -72,10 +72,12 @@ It runs the agent and can take a while, so yikes shows a live progress indicator
 
 If the project has no `AGENTS.md`, `yikes setup` also writes a starter one (it never overwrites an existing file) describing the project from what was found and what you typed, so coding agents pick up project context. Both files are previewed and written together on confirmation.
 
+`yikes setup` does not assume a backend. An explicit `-b/--backend` or the project's configured backend wins; otherwise it uses whichever of claude/codex is installed, and when **both** are present it asks which to use.
+
 ```bash
-yikes setup                     # scan with the configured/default backend, confirm, write
-yikes setup -b codex -y         # scan with Codex, write yikes.toml without confirmation
-yikes setup -m "a vite app"     # bias the scan toward what you are building
+yikes setup                     # pick backend (asks if both installed), confirm, write
+yikes setup -b codex -y         # use Codex, write without confirmation
+yikes setup -m "a vite app"     # tell it what you are building
 ```
 
 ### `yikes` with no arguments
