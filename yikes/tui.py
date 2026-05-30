@@ -237,6 +237,7 @@ def run_tui(
             self._refresh_controls()
             self.set_interval(1.6, self._refresh_activity_status)
             self.set_interval(1.6, self._refresh_live_tmux_output)
+            self.set_interval(2.5, self._poll_session_inventory)
             self._save_state()
             self._hide_suggestions()
             sessions = await self._refresh_sessions()
@@ -484,6 +485,19 @@ def run_tui(
 
         def _refresh_sessions_soon(self) -> None:
             self.run_worker(self._refresh_sessions(), exclusive=False)
+
+        def _poll_session_inventory(self) -> None:
+            """Pick up sessions created/closed by other yikes processes.
+
+            Rebuild the tabs only when the live session set actually changed, so
+            the tabs don't flicker or steal the active tab every tick.
+            """
+            if self.updating_session_tabs or self.question_mode:
+                return
+            sessions = SessionInventory().list()
+            live_ids = {session.id for session in sessions if session.state not in {"dead", "stopped"}}
+            if live_ids != self.session_tab_ids:
+                self._refresh_sessions_soon()
 
         def _selected_session_id(self) -> str:
             tabs = self.query_one("#session-tabs", Tabs)
