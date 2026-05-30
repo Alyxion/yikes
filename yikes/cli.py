@@ -592,16 +592,23 @@ def _preflight(
 
 
 def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool, goal: str | None = None) -> bool:
-    """Scan the repo via the backend and write yikes.toml. Returns True on write."""
+    """Look at the project (via the backend) and write yikes.toml — and an
+    AGENTS.md when one is missing. Returns True if anything was written."""
     from .drivers import ask_backend
-    from .preflight import parse_scan_result, ports_from_scan, scan_prompt, synthesize_config
+    from .preflight import (
+        parse_scan_result,
+        ports_from_scan,
+        scan_prompt,
+        synthesize_agents_md,
+        synthesize_config,
+    )
     from .project_config import CONFIG_NAME
 
     if goal is None and not assume_yes and sys.stdin.isatty():
-        entered = input("anything to add for the scan, e.g. what you want to build? (blank to skip) ").strip()
+        entered = input("What is this project about, or what do you want to build here? (press Enter to skip) ").strip()
         goal = entered or None
     try:
-        with _progress(f"scanning {project_dir} with {backend.value}"):
+        with _progress(f"looking at {project_dir} with {backend.value}"):
             reply = ask_backend(
                 backend,
                 Driver.DIRECT,
@@ -613,27 +620,41 @@ def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool, goal: s
             )
         data = parse_scan_result(reply)
     except YikesError as exc:
-        typer.echo(f"yikes: scan failed: {exc}", err=True)
+        typer.echo(f"yikes: could not inspect the project: {exc}", err=True)
         return False
     except ValueError as exc:
-        typer.echo(f"yikes: could not read scan result: {exc}", err=True)
+        typer.echo(f"yikes: could not read the result: {exc}", err=True)
         return False
+
     ports = ports_from_scan(data)
     scan_backend = data.get("backend") if data.get("backend") in ("claude", "codex") else None
+    summary = data.get("summary") if isinstance(data.get("summary"), str) else None
     content = synthesize_config(ports, scan_backend)
+    config_path = project_dir / CONFIG_NAME
+    agents_path = project_dir / "AGENTS.md"
+    make_agents = not agents_path.exists()
+    agents_content = synthesize_agents_md(summary, goal, ports) if make_agents else None
+
     typer.echo("\nproposed yikes.toml:\n")
     typer.echo(content)
     notes = data.get("notes")
     if isinstance(notes, str) and notes.strip():
         typer.echo(f"({notes.strip()})\n")
-    target = project_dir / CONFIG_NAME
+    if make_agents:
+        typer.echo("proposed AGENTS.md (new):\n")
+        typer.echo(agents_content)
+
+    targets = "yikes.toml" + (" and AGENTS.md" if make_agents else "")
     if not assume_yes and sys.stdin.isatty():
-        answer = input(f"write {target}? [y/N] ").strip().lower()
+        answer = input(f"write {targets}? [y/N] ").strip().lower()
         if answer not in ("y", "yes"):
             typer.echo("skipped")
             return False
-    target.write_text(content)
-    typer.echo(f"wrote {target}")
+    config_path.write_text(content)
+    typer.echo(f"wrote {config_path}")
+    if make_agents and agents_content is not None:
+        agents_path.write_text(agents_content)
+        typer.echo(f"wrote {agents_path}")
     return True
 
 

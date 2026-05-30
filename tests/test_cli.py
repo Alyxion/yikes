@@ -282,6 +282,35 @@ def test_setup_passes_goal_into_scan(tmp_path, monkeypatch) -> None:
     assert "a vite app" in captured["prompt"]
 
 
+def test_setup_creates_agents_md_when_missing(tmp_path, monkeypatch) -> None:
+    import yikes.drivers
+
+    monkeypatch.setattr(
+        yikes.drivers,
+        "ask_backend",
+        lambda *a, **k: '{"ports": [8080], "backend": "claude", "summary": "a tiny dashboard", "notes": "flask"}',
+    )
+
+    assert cli.main(["setup", "--cwd", str(tmp_path), "-m", "build a dashboard", "--yes"]) == 0
+    agents = tmp_path / "AGENTS.md"
+    assert agents.exists()
+    assert "build a dashboard" in agents.read_text()
+
+
+def test_setup_keeps_existing_agents_md(tmp_path, monkeypatch) -> None:
+    import yikes.drivers
+
+    (tmp_path / "AGENTS.md").write_text("KEEP ME")
+    monkeypatch.setattr(
+        yikes.drivers,
+        "ask_backend",
+        lambda *a, **k: '{"ports": [8080], "backend": "claude", "summary": "x", "notes": "y"}',
+    )
+
+    assert cli.main(["setup", "--cwd", str(tmp_path), "--yes"]) == 0
+    assert (tmp_path / "AGENTS.md").read_text() == "KEEP ME"
+
+
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     def fake_run_tui(**_kwargs: object) -> None:
         raise AssertionError("run_tui should not be called")

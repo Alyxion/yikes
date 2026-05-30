@@ -18,6 +18,7 @@ SCAN_PROMPT = (
     "directives, .env files, Procfile, and any framework config. "
     "Respond with ONE JSON object and nothing else, in this exact shape: "
     '{"ports": [<int>, ...], "backend": "claude" | "codex" | null, '
+    '"summary": "<one or two plain sentences describing what this project is or does>", '
     '"notes": "<one short sentence>"}. '
     "Use an empty list when the project serves no HTTP ports. Do not wrap the "
     "JSON in code fences or add any prose around it."
@@ -119,3 +120,24 @@ def synthesize_config(ports: tuple[int, ...], backend: str | None) -> str:
         lines.append("isolated = false")
         lines.append("# ports  = [8080]  # no HTTP ports detected")
     return "\n".join(lines) + "\n"
+
+
+def synthesize_agents_md(summary: str | None, goal: str | None, ports: tuple[int, ...]) -> str:
+    """Build a starter AGENTS.md describing the project for coding agents."""
+    description = (goal or summary or "").strip() or "Describe what this project does."
+    lines = [
+        "# AGENTS.md",
+        "",
+        "## Project",
+        "",
+        description,
+    ]
+    if ports:
+        port_list = ", ".join(str(port) for port in ports)
+        lines += ["", "## Local development", "", f"- HTTP port(s): {port_list}"]
+    lines += [
+        "",
+        "<!-- Starter file; edit freely to give coding agents project-specific guidance. -->",
+        "",
+    ]
+    return "\n".join(lines)

@@ -10,8 +10,23 @@ from yikes.preflight import (
     ports_from_scan,
     render_panel,
     scan_prompt,
+    synthesize_agents_md,
     synthesize_config,
 )
+
+
+def test_synthesize_agents_md_uses_goal_and_ports() -> None:
+    text = synthesize_agents_md(summary="auto summary", goal="a NiceGUI dashboard", ports=(8080,))
+
+    assert text.startswith("# AGENTS.md")
+    assert "a NiceGUI dashboard" in text  # goal wins over summary
+    assert "8080" in text
+
+
+def test_synthesize_agents_md_falls_back_to_summary() -> None:
+    text = synthesize_agents_md(summary="a small API", goal=None, ports=())
+
+    assert "a small API" in text
 from yikes.project_config import load_project_config
 
 

@@ -68,7 +68,9 @@ The message is pre-filled into the session's input on a **new** session only (ne
 
 `yikes setup` (and the `s` option above) runs the backend **once in direct CLI mode** (`ask_backend(..., Driver.DIRECT, ...)`, not a tmux session) to inspect the repository — package.json scripts, vite/next/webpack config, docker-compose, Dockerfile `EXPOSE`, `.env`, Procfile — and report the HTTP ports it serves as a small JSON object. yikes then synthesizes a `yikes.toml` from that result, prints it for review, and writes it on confirmation (`--yes` skips the prompt). The instruction sent to the backend is brand-free: it asks for ports as JSON and yikes builds the file, so nothing about yikes! is injected into the backend prompt.
 
-The scan runs the agent and can take a while, so yikes shows a live `scanning … Ns` progress indicator instead of sitting silent. When run interactively without `-m`, it first offers an optional "anything to add for the scan?" line (blank to skip) — useful on an empty project where you want to describe what you intend to build so the config reflects the right stack.
+It runs the agent and can take a while, so yikes shows a live progress indicator instead of sitting silent. When run interactively without `-m`, it first asks, in plain language, "What is this project about, or what do you want to build here?" (press Enter to skip) — useful on an empty project where describing your intent lets the generated config and `AGENTS.md` reflect the right stack.
+
+If the project has no `AGENTS.md`, `yikes setup` also writes a starter one (it never overwrites an existing file) describing the project from what was found and what you typed, so coding agents pick up project context. Both files are previewed and written together on confirmation.
 
 ```bash
 yikes setup                     # scan with the configured/default backend, confirm, write
