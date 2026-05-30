@@ -3,8 +3,11 @@ import re
 import shlex
 import sys
 import asyncio
+import contextlib
 import hashlib
 import os
+import threading
+import time
 from pathlib import Path
 
 from .domain import AgentSettings, Backend, ChatOptions, Complexity, Driver, McpServer
@@ -156,9 +159,10 @@ if typer:
         model: str | None = typer.Option(None, "--model", help="Backend model name."),
         port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+        message: str | None = typer.Option(None, "--message", "-m", help="Initial prompt to pre-fill in a new session."),
         yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight panel prompt and start immediately."),
     ) -> None:
-        _launch(Backend.CLAUDE, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, yes=yes)
+        _launch(Backend.CLAUDE, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, message=message, yes=yes)
 
     @app.command("codex")
     def codex(
@@ -168,9 +172,10 @@ if typer:
         model: str | None = typer.Option(None, "--model", help="Backend model name."),
         port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+        message: str | None = typer.Option(None, "--message", "-m", help="Initial prompt to pre-fill in a new session."),
         yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight panel prompt and start immediately."),
     ) -> None:
-        _launch(Backend.CODEX, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, yes=yes)
+        _launch(Backend.CODEX, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, message=message, yes=yes)
 
     @app.command("init")
     def init(
@@ -190,13 +195,14 @@ if typer:
     def setup(
         backend: Backend | None = typer.Option(None, "--backend", "-b", help="Backend to run the scan. Default: yikes.toml or claude."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+        message: str | None = typer.Option(None, "--message", "-m", help="What you want to build, to guide the scan."),
         yes: bool = typer.Option(False, "--yes", "-y", help="Write yikes.toml without confirmation."),
     ) -> None:
         from .project_config import load_project_config
 
         project_dir = (cwd or Path.cwd()).expanduser()
         resolved_backend = backend or _config_backend(load_project_config(project_dir)) or Backend.CLAUDE
-        if not _run_setup(resolved_backend, project_dir, assume_yes=yes):
+        if not _run_setup(resolved_backend, project_dir, assume_yes=yes, goal=message):
             raise typer.Exit(1)
 
     @app.command("menu")
@@ -509,36 +515,41 @@ def _launch(
     model: str | None,
     port: list[str] | None,
     cwd: Path | None,
+    message: str | None = None,
     yes: bool = False,
 ) -> None:
     from .project_config import load_project_config, normalize_port
 
     project_dir = (cwd or Path.cwd()).expanduser()
+    goal = message
     while True:
         config = load_project_config(project_dir)
         use_isolated = config.isolated if isolated is None else isolated
         resolved_model = model or config.model
         session_name = _sanitize_session_name(name or config.name or project_dir.resolve().name)
         ports = tuple(normalize_port(spec) for spec in port) if port else config.ports
-        action = _preflight(
+        action, goal = _preflight(
             backend,
             project_dir,
             session_name,
             isolated=use_isolated,
             ports=ports,
             config_source=str(config.source) if config.source else None,
+            goal=goal,
             assume_yes=yes,
         )
         if action == "cancel":
             return
         if action == "setup":
-            _run_setup(backend, project_dir, assume_yes=False)
+            _run_setup(backend, project_dir, assume_yes=False, goal=goal)
             continue  # re-render the panel with the freshly written config
+        if action == "prompt":
+            continue  # goal updated; re-render the panel
         break
     if use_isolated:
-        _launch_docker(backend, project_dir, session_name, new=new, model=resolved_model, ports=ports)
+        _launch_docker(backend, project_dir, session_name, new=new, model=resolved_model, ports=ports, message=goal)
     else:
-        _launch_host(backend, project_dir, session_name, new=new, model=resolved_model)
+        _launch_host(backend, project_dir, session_name, new=new, model=resolved_model, message=goal)
 
 
 def _preflight(
@@ -549,9 +560,10 @@ def _preflight(
     isolated: bool,
     ports: tuple[tuple[str, str], ...],
     config_source: str | None,
+    goal: str | None,
     assume_yes: bool,
-) -> str:
-    """Print the pre-flight panel and return "start", "setup", or "cancel"."""
+) -> tuple[str, str | None]:
+    """Print the panel and return (action, goal). Action: start/setup/prompt/cancel."""
     from .preflight import render_panel
 
     panel = render_panel(
@@ -563,35 +575,42 @@ def _preflight(
         config_source=config_source,
         ports=ports,
         isolated=isolated,
+        goal=goal,
     )
     typer.echo(panel)
     if assume_yes or os.environ.get("YIKES_NO_PROMPT") or not sys.stdin.isatty():
-        return "start"
+        return "start", goal
     choice = input("> ").strip().lower()
     if choice in ("", "y", "yes", "start"):
-        return "start"
+        return "start", goal
     if choice in ("s", "setup", "scan"):
-        return "setup"
-    return "cancel"
+        return "setup", goal
+    if choice in ("p", "prompt", "m", "message"):
+        entered = input("initial prompt> ").strip()
+        return "prompt", (entered or goal)
+    return "cancel", goal
 
 
-def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool) -> bool:
+def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool, goal: str | None = None) -> bool:
     """Scan the repo via the backend and write yikes.toml. Returns True on write."""
     from .drivers import ask_backend
-    from .preflight import SCAN_PROMPT, parse_scan_result, ports_from_scan, synthesize_config
+    from .preflight import parse_scan_result, ports_from_scan, scan_prompt, synthesize_config
     from .project_config import CONFIG_NAME
 
-    typer.echo(f"scanning {project_dir} with {backend.value} ...")
+    if goal is None and not assume_yes and sys.stdin.isatty():
+        entered = input("anything to add for the scan, e.g. what you want to build? (blank to skip) ").strip()
+        goal = entered or None
     try:
-        reply = ask_backend(
-            backend,
-            Driver.DIRECT,
-            SCAN_PROMPT,
-            cwd=project_dir,
-            timeout=180.0,
-            model=None,
-            settings=AgentSettings(),
-        )
+        with _progress(f"scanning {project_dir} with {backend.value}"):
+            reply = ask_backend(
+                backend,
+                Driver.DIRECT,
+                scan_prompt(goal),
+                cwd=project_dir,
+                timeout=180.0,
+                model=None,
+                settings=AgentSettings(),
+            )
         data = parse_scan_result(reply)
     except YikesError as exc:
         typer.echo(f"yikes: scan failed: {exc}", err=True)
@@ -633,12 +652,61 @@ def _config_backend(config: object) -> Backend | None:
         return None
 
 
-def _launch_host(backend: Backend, project_dir: Path, name: str, *, new: bool, model: str | None) -> None:
+@contextlib.contextmanager
+def _progress(label: str):
+    """Show a live `label … Ns` spinner on a daemon thread while a call runs."""
+    if not sys.stderr.isatty():
+        typer.echo(f"{label} ...", err=True)
+        yield
+        return
+    stop = threading.Event()
+    start = time.monotonic()
+    frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def spin() -> None:
+        i = 0
+        while not stop.is_set():
+            elapsed = int(time.monotonic() - start)
+            sys.stderr.write(f"\r{frames[i % len(frames)]} {label} … {elapsed}s ")
+            sys.stderr.flush()
+            i += 1
+            stop.wait(0.1)
+
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1)
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+
+
+def _seed_session(ref: str, message: str) -> None:
+    """Pre-fill a freshly created session with an initial prompt (best effort)."""
+    from .session_inventory import TmuxSessionController
+
+    controller = TmuxSessionController()
+    try:
+        with _progress("preparing session"):
+            controller.wait(ref, timeout=20)
+        controller.send(ref, message, submit=False)
+        typer.echo("initial prompt pre-filled — review it and press Enter to send")
+    except Exception as exc:  # best effort: never block the attach on a seed hiccup
+        typer.echo(f"yikes: could not pre-fill the prompt ({exc}); type it after attaching", err=True)
+
+
+def _launch_host(
+    backend: Backend, project_dir: Path, name: str, *, new: bool, model: str | None, message: str | None = None
+) -> None:
     from .session_inventory import SessionLifecycle, TmuxSessionController
 
     result = TmuxSessionController().start(name, backend=backend, cwd=project_dir, model=model, replace=new)
     action = "replaced" if result.replaced else "started" if result.created else "reattaching"
     typer.echo(f"{action}: {name} ({backend.value}) @ {project_dir}")
+    if message and result.created:
+        _seed_session(name, message)
     command = SessionLifecycle().attach_command(name)
     if command is None:
         typer.echo(f"yikes: could not attach to {name}", err=True)
@@ -654,14 +722,17 @@ def _launch_docker(
     new: bool,
     model: str | None,
     ports: tuple[tuple[str, str], ...],
+    message: str | None = None,
 ) -> None:
     from .drivers import ensure_interactive_session
     from .session_inventory import SessionLifecycle
 
     session_id = _docker_session_id(backend, project_dir)
     lifecycle = SessionLifecycle()
+    existed = lifecycle.resolve_session_id(session_id) is not None
     if new:
         lifecycle.close(session_id)
+        existed = False
     options = ChatOptions(
         backend=backend,
         driver=Driver.DOCKER,
@@ -675,6 +746,8 @@ def _launch_docker(
     ensure_interactive_session(options)
     for url in _published_urls(session_id):
         typer.echo(f"  {url}")
+    if message and not existed:
+        _seed_session(session_id, message)
     command = lifecycle.attach_command(session_id)
     if command is None:
         typer.echo("yikes: could not attach to the container session", err=True)

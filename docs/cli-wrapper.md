@@ -52,15 +52,28 @@ Because the backend's TUI takes over the screen on attach, each launch first pri
   [Enter] start   ·   [s] scan & set up yikes.toml   ·   [q] cancel
 ```
 
-In an interactive terminal it waits for one keypress: `Enter` (the default) starts, `s` runs the agentic setup below and re-renders, `q` cancels without launching. Pass `-y/--yes`, set `YIKES_NO_PROMPT=1`, or run without a TTY (pipes, scripts) to print the panel and start without the prompt.
+In an interactive terminal it waits for one keypress: `Enter` (the default) starts, `p` adds an initial prompt (see below), `s` runs the agentic setup and re-renders, `q` cancels without launching. Pass `-y/--yes`, set `YIKES_NO_PROMPT=1`, or run without a TTY (pipes, scripts) to print the panel and start without the prompt.
+
+### Initial prompt for a new session
+
+You can hand the session a first message instead of typing it after attaching — useful when you are starting fresh and want to tell the backend what to build. Provide it with `-m/--message`, or press `p` in the panel to type it in. The option is always available; yikes does not try to guess whether the project is "new".
+
+```bash
+yikes claude -m "scaffold a NiceGUI dashboard that serves on 8080"
+```
+
+The message is pre-filled into the session's input on a **new** session only (never on a reattach) and is **not auto-submitted** — yikes waits for the backend to be ready, pastes the text, and leaves it for you to review and send with Enter. The same message also biases `yikes setup`'s scan (below) so the generated config matches the intended stack.
 
 ### `yikes setup` — agentic yikes.toml
 
 `yikes setup` (and the `s` option above) runs the backend **once in direct CLI mode** (`ask_backend(..., Driver.DIRECT, ...)`, not a tmux session) to inspect the repository — package.json scripts, vite/next/webpack config, docker-compose, Dockerfile `EXPOSE`, `.env`, Procfile — and report the HTTP ports it serves as a small JSON object. yikes then synthesizes a `yikes.toml` from that result, prints it for review, and writes it on confirmation (`--yes` skips the prompt). The instruction sent to the backend is brand-free: it asks for ports as JSON and yikes builds the file, so nothing about yikes! is injected into the backend prompt.
 
+The scan runs the agent and can take a while, so yikes shows a live `scanning … Ns` progress indicator instead of sitting silent. When run interactively without `-m`, it first offers an optional "anything to add for the scan?" line (blank to skip) — useful on an empty project where you want to describe what you intend to build so the config reflects the right stack.
+
 ```bash
-yikes setup              # scan with the configured/default backend, confirm, write
-yikes setup -b codex -y  # scan with Codex, write yikes.toml without confirmation
+yikes setup                     # scan with the configured/default backend, confirm, write
+yikes setup -b codex -y         # scan with Codex, write yikes.toml without confirmation
+yikes setup -m "a vite app"     # bias the scan toward what you are building
 ```
 
 ### `yikes` with no arguments

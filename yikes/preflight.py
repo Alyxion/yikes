@@ -24,6 +24,17 @@ SCAN_PROMPT = (
 )
 
 
+def scan_prompt(goal: str | None) -> str:
+    """The repo-scan instruction, optionally biased by a user-stated goal."""
+    if goal and goal.strip():
+        return (
+            f"{SCAN_PROMPT} The user intends to build the following here, so "
+            f"account for the stack and ports it implies even if the repository "
+            f"does not show them yet: {goal.strip()}"
+        )
+    return SCAN_PROMPT
+
+
 def render_panel(
     *,
     backend: str,
@@ -34,6 +45,7 @@ def render_panel(
     config_source: str | None,
     ports: tuple[tuple[str, str], ...],
     isolated: bool,
+    goal: str | None = None,
 ) -> str:
     """Return the compact pre-flight panel shown before attaching."""
     state = "reattach" if reused else "new"
@@ -46,13 +58,15 @@ def render_panel(
     if isolated:
         port_text = ", ".join(host for host, _ in ports) if ports else "none"
         lines.append(f"  ports     {port_text}")
+    if goal and goal.strip():
+        lines.append(f"  prompt    {goal.strip()}")
     lines.extend(
         [
             "",
             f"  detach    Ctrl-b d        reattach   yikes {backend}",
             f"  close     yikes close {name}",
             "",
-            "  [Enter] start   ·   [s] scan & set up yikes.toml   ·   [q] cancel",
+            "  [Enter] start   ·   [p] add an initial prompt   ·   [s] scan & set up yikes.toml   ·   [q] cancel",
         ]
     )
     return "\n".join(lines)

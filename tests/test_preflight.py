@@ -5,12 +5,38 @@ from pathlib import Path
 import pytest
 
 from yikes.preflight import (
+    SCAN_PROMPT,
     parse_scan_result,
     ports_from_scan,
     render_panel,
+    scan_prompt,
     synthesize_config,
 )
 from yikes.project_config import load_project_config
+
+
+def test_panel_always_offers_initial_prompt_and_echoes_goal() -> None:
+    panel = render_panel(
+        backend="claude",
+        name="api",
+        location="host",
+        cwd="/srv/api",
+        reused=False,
+        config_source=None,
+        ports=(),
+        isolated=False,
+        goal="build a NiceGUI dashboard",
+    )
+
+    assert "[p] add an initial prompt" in panel
+    assert "build a NiceGUI dashboard" in panel
+
+
+def test_scan_prompt_folds_in_goal() -> None:
+    assert scan_prompt(None) == SCAN_PROMPT
+    biased = scan_prompt("a vite app on 5173")
+    assert SCAN_PROMPT in biased
+    assert "a vite app on 5173" in biased
 
 
 def test_render_panel_shows_commands_and_ports() -> None:

@@ -106,7 +106,7 @@ def test_config_isolated_and_ports_route_to_docker(tmp_path, monkeypatch) -> Non
     (tmp_path / "yikes.toml").write_text("isolated = true\nports = [8080]\n")
     captured: dict[str, object] = {}
 
-    def fake_docker(backend, project_dir, name, *, new, model, ports):
+    def fake_docker(backend, project_dir, name, *, new, model, ports, message=None):
         captured.update(backend=backend, name=name, ports=ports)
 
     monkeypatch.setattr(cli, "_launch_docker", fake_docker)
@@ -121,7 +121,7 @@ def test_port_flag_overrides_config(tmp_path, monkeypatch) -> None:
     (tmp_path / "yikes.toml").write_text("isolated = true\nports = [8080]\n")
     captured: dict[str, object] = {}
 
-    def fake_docker(backend, project_dir, name, *, new, model, ports):
+    def fake_docker(backend, project_dir, name, *, new, model, ports, message=None):
         captured.update(ports=ports)
 
     monkeypatch.setattr(cli, "_launch_docker", fake_docker)
@@ -178,7 +178,9 @@ def test_preflight_setup_then_start(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("builtins.input", lambda *_a: next(answers))
     setup_calls: dict[str, object] = {}
     monkeypatch.setattr(
-        cli, "_run_setup", lambda backend, project_dir, *, assume_yes: setup_calls.update(backend=backend) or True
+        cli,
+        "_run_setup",
+        lambda backend, project_dir, *, assume_yes, goal=None: setup_calls.update(backend=backend) or True,
     )
     state = _stub_host_launch(monkeypatch)
 
@@ -215,6 +217,69 @@ def test_setup_writes_config_from_scan(tmp_path, monkeypatch) -> None:
     config = load_project_config(tmp_path)
     assert config.backend == "codex"
     assert config.ports == (("8080", "8080"), ("5173", "5173"))
+
+
+def _stub_seed(monkeypatch) -> list[tuple[str, object]]:
+    sent: list[tuple[str, object]] = []
+    monkeypatch.setattr(yikes.session_inventory.TmuxSessionController, "wait", lambda self, ref, **k: None)
+    monkeypatch.setattr(
+        yikes.session_inventory.TmuxSessionController,
+        "send",
+        lambda self, ref, text, *, submit=True: sent.append((text, submit)),
+    )
+    return sent
+
+
+def test_message_seeds_new_session(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=False))
+    _stub_host_launch(monkeypatch)  # start -> created=True
+    sent = _stub_seed(monkeypatch)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path), "-m", "make a vite app"]) == 0
+    assert sent == [("make a vite app", False)]
+
+
+def test_reattach_does_not_seed(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=False))
+
+    def fake_start(self, name, *, backend, cwd, model=None, replace=False):
+        return SimpleNamespace(
+            id="x", name=name, backend=backend.value, socket="s", session=name, created=False, replaced=False
+        )
+
+    monkeypatch.setattr(yikes.session_inventory.TmuxSessionController, "start", fake_start)
+    monkeypatch.setattr(yikes.session_inventory.SessionLifecycle, "attach_command", lambda self, ref: ["true"])
+    monkeypatch.setattr(cli.os, "execvp", lambda *_a: None)
+    sent = _stub_seed(monkeypatch)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path), "-m", "hi"]) == 0
+    assert sent == []
+
+
+def test_panel_prompt_key_sets_goal_and_seeds(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+    answers = iter(["p", "build X", ""])
+    monkeypatch.setattr("builtins.input", lambda *_a: next(answers))
+    _stub_host_launch(monkeypatch)  # start -> created=True
+    sent = _stub_seed(monkeypatch)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path)]) == 0
+    assert sent == [("build X", False)]
+
+
+def test_setup_passes_goal_into_scan(tmp_path, monkeypatch) -> None:
+    import yikes.drivers
+
+    captured: dict[str, object] = {}
+
+    def fake_ask(backend, driver, prompt, **kwargs):
+        captured["prompt"] = prompt
+        return '{"ports": [5173], "backend": "claude", "notes": "vite"}'
+
+    monkeypatch.setattr(yikes.drivers, "ask_backend", fake_ask)
+
+    assert cli.main(["setup", "--cwd", str(tmp_path), "-m", "a vite app", "--yes"]) == 0
+    assert "a vite app" in captured["prompt"]
 
 
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
