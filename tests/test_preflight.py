@@ -30,7 +30,7 @@ def test_synthesize_agents_md_falls_back_to_summary() -> None:
 from yikes.project_config import load_project_config
 
 
-def test_panel_always_offers_initial_prompt_and_echoes_goal() -> None:
+def test_panel_echoes_goal() -> None:
     panel = render_panel(
         backend="claude",
         name="api",
@@ -43,8 +43,8 @@ def test_panel_always_offers_initial_prompt_and_echoes_goal() -> None:
         goal="build a NiceGUI dashboard",
     )
 
-    assert "[p] add an initial prompt" in panel
     assert "build a NiceGUI dashboard" in panel
+    assert "Ctrl-b d" in panel
 
 
 def test_scan_prompt_folds_in_goal() -> None:

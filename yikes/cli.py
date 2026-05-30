@@ -580,15 +580,23 @@ def _preflight(
     typer.echo(panel)
     if assume_yes or os.environ.get("YIKES_NO_PROMPT") or not sys.stdin.isatty():
         return "start", goal
-    choice = input("> ").strip().lower()
-    if choice in ("", "y", "yes", "start"):
-        return "start", goal
-    if choice in ("s", "setup", "scan"):
-        return "setup", goal
-    if choice in ("p", "prompt", "m", "message"):
+    from . import interactive
+
+    action = interactive.select(
+        "",
+        [
+            ("start", "Start the session"),
+            ("prompt", "Add an initial prompt"),
+            ("setup", "Set up yikes.toml for this project"),
+            ("cancel", "Cancel"),
+        ],
+    )
+    if action is None or action == "cancel":
+        return "cancel", goal
+    if action == "prompt":
         entered = input("initial prompt> ").strip()
         return "prompt", (entered or goal)
-    return "cancel", goal
+    return action, goal
 
 
 def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool, goal: str | None = None) -> bool:
@@ -644,10 +652,11 @@ def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool, goal: s
         typer.echo("proposed AGENTS.md (new):\n")
         typer.echo(agents_content)
 
-    targets = "yikes.toml" + (" and AGENTS.md" if make_agents else "")
+    targets = "yikes.toml" + " and AGENTS.md" if make_agents else "yikes.toml"
     if not assume_yes and sys.stdin.isatty():
-        answer = input(f"write {targets}? [y/N] ").strip().lower()
-        if answer not in ("y", "yes"):
+        from . import interactive
+
+        if not interactive.confirm(f"Write {targets}?", default=True):
             typer.echo("skipped")
             return False
     config_path.write_text(content)
@@ -693,13 +702,13 @@ def _resolve_setup_backend(explicit: Backend | None, config_backend: Backend | N
     if len(available) == 1:
         return available[0]
     if len(available) >= 2 and sys.stdin.isatty():
-        typer.echo("Both claude and codex are installed — which should set up this project?")
-        typer.echo("  [1] claude")
-        typer.echo("  [2] codex")
-        choice = input("> ").strip().lower()
-        if choice in ("2", "codex", "x"):
-            return Backend.CODEX
-        return Backend.CLAUDE
+        from . import interactive
+
+        choice = interactive.select(
+            "Both claude and codex are installed — which should set up this project?",
+            [("claude", "claude"), ("codex", "codex")],
+        )
+        return Backend(choice) if choice else Backend.CLAUDE
     return available[0] if available else Backend.CLAUDE
 
 
@@ -832,20 +841,18 @@ def _run_menu() -> None:
     if not sys.stdin.isatty():
         app(args=["tui"], standalone_mode=False)
         return
-    typer.echo("yikes! — what would you like to start?")
-    typer.echo("  [1] claude     interactive Claude session for this directory")
-    typer.echo("  [2] codex      interactive Codex session for this directory")
-    typer.echo("  [3] overview   full terminal dashboard")
-    choice = input("> ").strip().lower()
-    routes = {
-        "1": "claude", "claude": "claude", "c": "claude",
-        "2": "codex", "codex": "codex", "x": "codex",
-        "3": "tui", "overview": "tui", "o": "tui", "": "tui",
-    }
-    target = routes.get(choice)
+    from . import interactive
+
+    target = interactive.select(
+        "yikes! — what would you like to start?",
+        [
+            ("claude", "claude — interactive Claude session for this directory"),
+            ("codex", "codex — interactive Codex session for this directory"),
+            ("tui", "terminal overview (dashboard)"),
+        ],
+    )
     if target is None:
-        typer.echo(f"yikes: unknown choice {choice!r}", err=True)
-        raise typer.Exit(1)
+        return
     app(args=[target], standalone_mode=False)
 
 

@@ -48,15 +48,20 @@ Because the backend's TUI takes over the screen on attach, each launch first pri
 
   detach    Ctrl-b d        reattach   yikes claude
   close     yikes close shop
-
-  [Enter] start   ·   [s] scan & set up yikes.toml   ·   [q] cancel
 ```
 
-In an interactive terminal it waits for one keypress: `Enter` (the default) starts, `p` adds an initial prompt (see below), `s` runs the agentic setup and re-renders, `q` cancels without launching. Pass `-y/--yes`, set `YIKES_NO_PROMPT=1`, or run without a TTY (pipes, scripts) to print the panel and start without the prompt.
+Below the panel it shows an interactive menu — navigate with the arrow keys (or `j`/`k`) and press Enter:
+
+- **Start the session** (highlighted by default)
+- **Add an initial prompt** — type a first message to seed the session (see below)
+- **Set up yikes.toml for this project** — runs `yikes setup` and re-renders
+- **Cancel**
+
+`Esc` or `q` cancels. Pass `-y/--yes`, set `YIKES_NO_PROMPT=1`, or run without a TTY (pipes, scripts) to print the panel and start without the menu. All of yikes' terminal menus use the same arrow-key selection.
 
 ### Initial prompt for a new session
 
-You can hand the session a first message instead of typing it after attaching — useful when you are starting fresh and want to tell the backend what to build. Provide it with `-m/--message`, or press `p` in the panel to type it in. The option is always available; yikes does not try to guess whether the project is "new".
+You can hand the session a first message instead of typing it after attaching — useful when you are starting fresh and want to tell the backend what to build. Provide it with `-m/--message`, or pick "Add an initial prompt" in the panel. The option is always available; yikes does not try to guess whether the project is "new".
 
 ```bash
 yikes claude -m "scaffold a NiceGUI dashboard that serves on 8080"
@@ -82,7 +87,7 @@ yikes setup -m "a vite app"     # tell it what you are building
 
 ### `yikes` with no arguments
 
-Bare `yikes` shows a small chooser — claude / codex / terminal overview — and dispatches to the matching launcher or to the full dashboard (`yikes tui`). When stdin is not a TTY (pipes, scripts), it falls back to `yikes tui` so non-interactive use keeps working.
+Bare `yikes` shows a small arrow-key chooser — claude / codex / terminal overview — and dispatches to the matching launcher or to the full dashboard (`yikes tui`). When stdin is not a TTY (pipes, scripts), it falls back to `yikes tui` so non-interactive use keeps working.
 
 ### Isolated sessions (`-i`) and ports
 

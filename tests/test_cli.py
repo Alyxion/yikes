@@ -8,9 +8,16 @@ import pytest
 
 from yikes import AgentSettings, Backend, Complexity, Driver, DurableSessionManager, RuntimeKind, RuntimeRef
 from yikes import cli
+import yikes.interactive
 import yikes.session_inventory
 import yikes.tui
 import yikes.remote
+
+
+def _stub_select(monkeypatch, returns) -> None:
+    """Make interactive.select return the given value(s) in order."""
+    seq = iter(returns) if isinstance(returns, (list, tuple)) else iter([returns])
+    monkeypatch.setattr(yikes.interactive, "select", lambda *a, **k: next(seq))
 
 
 def _fake_stdin(*, tty: bool) -> SimpleNamespace:
@@ -52,7 +59,7 @@ def test_no_args_menu_falls_back_to_tui_without_tty(monkeypatch) -> None:
 
 def test_menu_routes_choice_to_codex(monkeypatch) -> None:
     monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
-    monkeypatch.setattr("builtins.input", lambda *_args: "2")
+    _stub_select(monkeypatch, "codex")
     routed: dict[str, object] = {}
     monkeypatch.setattr(cli, "_launch", lambda backend, **_kw: routed.update(backend=backend))
 
@@ -165,7 +172,7 @@ def test_preflight_panel_prints_without_tty(tmp_path, monkeypatch, capsys) -> No
 
 def test_preflight_cancel_does_not_start(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
-    monkeypatch.setattr("builtins.input", lambda *_a: "q")
+    _stub_select(monkeypatch, "cancel")
     state = _stub_host_launch(monkeypatch)
 
     assert cli.main(["claude", "--cwd", str(tmp_path)]) == 0
@@ -174,8 +181,7 @@ def test_preflight_cancel_does_not_start(tmp_path, monkeypatch) -> None:
 
 def test_preflight_setup_then_start(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
-    answers = iter(["s", ""])
-    monkeypatch.setattr("builtins.input", lambda *_a: next(answers))
+    _stub_select(monkeypatch, ["setup", "start"])
     setup_calls: dict[str, object] = {}
     monkeypatch.setattr(
         cli,
@@ -192,10 +198,10 @@ def test_preflight_setup_then_start(tmp_path, monkeypatch) -> None:
 def test_yes_flag_skips_prompt(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
 
-    def boom(*_a):  # input must not be called
+    def boom(*_a, **_k):  # no menu should appear with --yes
         raise AssertionError("prompt should be skipped with --yes")
 
-    monkeypatch.setattr("builtins.input", boom)
+    monkeypatch.setattr(yikes.interactive, "select", boom)
     state = _stub_host_launch(monkeypatch)
 
     assert cli.main(["claude", "--cwd", str(tmp_path), "--yes"]) == 0
@@ -258,8 +264,8 @@ def test_reattach_does_not_seed(tmp_path, monkeypatch) -> None:
 
 def test_panel_prompt_key_sets_goal_and_seeds(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
-    answers = iter(["p", "build X", ""])
-    monkeypatch.setattr("builtins.input", lambda *_a: next(answers))
+    _stub_select(monkeypatch, ["prompt", "start"])  # choose "add a prompt", then start
+    monkeypatch.setattr("builtins.input", lambda *_a: "build X")  # the free-text prompt
     _stub_host_launch(monkeypatch)  # start -> created=True
     sent = _stub_seed(monkeypatch)
 
@@ -316,9 +322,9 @@ def test_setup_asks_for_backend_when_both_present(tmp_path, monkeypatch) -> None
 
     monkeypatch.setattr(cli, "_available_backends", lambda: [Backend.CLAUDE, Backend.CODEX])
     monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
-    # backend choice -> codex, project question -> skip, write confirm -> yes
-    answers = iter(["2", "", "y"])
-    monkeypatch.setattr("builtins.input", lambda *_a: next(answers))
+    _stub_select(monkeypatch, "codex")  # backend choice
+    monkeypatch.setattr("builtins.input", lambda *_a: "")  # project question -> skip
+    monkeypatch.setattr(yikes.interactive, "confirm", lambda *a, **k: True)  # write confirm
     used: dict[str, object] = {}
 
     def fake_ask(backend, *a, **k):
@@ -337,10 +343,10 @@ def test_setup_uses_sole_backend_without_asking(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_available_backends", lambda: [Backend.CODEX])
     monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
 
-    def boom(*_a):
+    def boom(*_a, **_k):
         raise AssertionError("should not ask when only one backend is installed")
 
-    monkeypatch.setattr("builtins.input", boom)
+    monkeypatch.setattr(yikes.interactive, "select", boom)
     used: dict[str, object] = {}
 
     def fake_ask(backend, *a, **k):

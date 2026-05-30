@@ -66,8 +66,6 @@ def render_panel(
             "",
             f"  detach    Ctrl-b d        reattach   yikes {backend}",
             f"  close     yikes close {name}",
-            "",
-            "  [Enter] start   ·   [p] add an initial prompt   ·   [s] scan & set up yikes.toml   ·   [q] cancel",
         ]
     )
     return "\n".join(lines)
