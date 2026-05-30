@@ -91,6 +91,24 @@ def test_web_requires_cookie_and_login_key_sets_cookie(tmp_path: Path, monkeypat
             assert ws.receive_json()["state"]["brand"] == "yikes!"
 
 
+def test_web_auth_key_is_global_not_per_directory(tmp_path: Path, monkeypatch) -> None:
+    store = tmp_path / "web-auth.env"
+    monkeypatch.setenv("YIKES_WEB_ENV", str(store))
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+
+    monkeypatch.chdir(dir_a)
+    from_a = WebAuthConfig.load(developer_mode=False)
+    monkeypatch.chdir(dir_b)
+    from_b = WebAuthConfig.load(developer_mode=False)
+
+    assert from_a.login_key == from_b.login_key  # same key regardless of cwd
+    assert store.exists()
+    assert not (dir_a / ".env").exists()  # never written to the project dir
+
+
 def test_web_login_throttles_brute_force(tmp_path: Path) -> None:
     auth = WebAuthConfig(secret="test-secret", login_key="right-key", developer_mode=True)
     app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)

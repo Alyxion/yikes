@@ -13,6 +13,8 @@ from urllib.parse import urlencode
 
 COOKIE_NAME = "yikes_web_auth"
 DEFAULT_COOKIE_TTL_SECONDS = 12 * 60 * 60
+# User-global auth store: the login key must not depend on the launch directory.
+DEFAULT_WEB_AUTH_ENV = Path.home() / ".yikes" / "web-auth.env"
 
 
 @dataclass(frozen=True)
@@ -147,7 +149,7 @@ def _env_path(path: Path | None = None) -> Path:
     override = os.environ.get("YIKES_WEB_ENV")
     if override:
         return Path(override).expanduser()
-    return Path.cwd() / ".env"
+    return DEFAULT_WEB_AUTH_ENV
 
 
 def _read_env(path: Path) -> dict[str, str]:

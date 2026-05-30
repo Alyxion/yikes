@@ -29,11 +29,10 @@ def launch_web_ui(
     open_browser: bool = True,
 ) -> WebLaunchResult:
     root = (cwd or Path.cwd()).expanduser()
-    auth = WebAuthConfig.load(developer_mode=developer_mode, env_path=root / ".env", persist_auth=persistent_auth)
+    auth = WebAuthConfig.load(developer_mode=developer_mode, persist_auth=persistent_auth)
     started = False
     if not _port_open(host, port):
         env = os.environ.copy()
-        env["YIKES_WEB_ENV"] = str(root / ".env")
         env["YIKES_WEB_DEV"] = "1" if developer_mode else "0"
         log = Path(os.environ.get("YIKES_WEB_LOG", "/tmp/yikes-web.log"))
         subprocess.Popen(

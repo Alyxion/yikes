@@ -487,7 +487,9 @@ if typer:
         from .web_auth import WebAuthConfig
 
         root = (cwd or Path.cwd()).expanduser()
-        auth_config = WebAuthConfig.load(developer_mode=dev, env_path=root / ".env", persist_auth=persistent_auth)
+        # Auth key is user-global (not per-directory), so it's the same wherever
+        # `yikes web` is launched and `--url` always matches the running server.
+        auth_config = WebAuthConfig.load(developer_mode=dev, persist_auth=persistent_auth)
         advertise = _advertise_hosts(host)
         if url_only:
             # one machine-consumable URL: the most reachable host for this bind

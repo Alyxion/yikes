@@ -27,3 +27,4 @@ def isolate_yikes_home(request, tmp_path_factory, monkeypatch):
     monkeypatch.setenv("YIKES_SANDBOX_STORE", str(home / "sandboxes"))
     monkeypatch.setenv("YIKES_STATE_PATH", str(home / "state.json"))
     monkeypatch.setenv("YIKES_PROMPT_PROFILE_PATH", str(home / "prompt-profile.json"))
+    monkeypatch.setenv("YIKES_WEB_ENV", str(home / "web-auth.env"))
