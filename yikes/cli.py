@@ -189,7 +189,7 @@ if typer:
             typer.echo(f"yikes: {target} already exists (use --force to overwrite)", err=True)
             raise typer.Exit(1)
         target.write_text(starter_toml())
-        typer.echo(f"wrote {target}")
+        typer.echo(_fmt(f"wrote {target}", "success"))
 
     @app.command("setup")
     def setup(
@@ -407,9 +407,9 @@ if typer:
         if not summaries:
             typer.echo("No matching sessions to close.")
             return
-        typer.echo(f"This will close {len(summaries)} session(s):")
+        typer.echo(_fmt(f"This will close {len(summaries)} session(s):", "header"))
         for summary in summaries:
-            typer.echo(f"  {summary.id}  {summary.runtime}/{summary.backend}  {summary.state}")
+            typer.echo(f"  {summary.id}  {_fmt(f'{summary.runtime}/{summary.backend}', 'accent')}  {summary.state}")
         if not yes:
             if not sys.stdin.isatty():
                 typer.echo("yikes: refusing to close sessions non-interactively; pass --yes", err=True)
@@ -422,7 +422,8 @@ if typer:
         results = [lifecycle.close(summary.id) for summary in summaries]
         for result in results:
             typer.echo(result.message)
-        typer.echo(f"Closed {sum(1 for result in results if result.closed)}/{len(results)} sessions.")
+        closed = sum(1 for result in results if result.closed)
+        typer.echo(_fmt(f"Closed {closed}/{len(results)} sessions.", "success"))
 
     @app.command("token")
     def token(
@@ -579,8 +580,10 @@ def _preflight(
     assume_yes: bool,
 ) -> tuple[str, str | None]:
     """Print the panel and return (action, goal). Action: start/setup/prompt/cancel."""
+    from . import interactive
     from .preflight import render_panel
 
+    interactive.clear_screen()
     panel = render_panel(
         backend=backend.value,
         name=name,
@@ -591,11 +594,12 @@ def _preflight(
         ports=ports,
         isolated=isolated,
         goal=goal,
+        color=sys.stdout.isatty(),
     )
     typer.echo(panel)
+    typer.echo("")
     if assume_yes or os.environ.get("YIKES_NO_PROMPT") or not sys.stdin.isatty():
         return "start", goal
-    from . import interactive
 
     action = interactive.select(
         "",
@@ -658,13 +662,13 @@ def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool, goal: s
     make_agents = not agents_path.exists()
     agents_content = synthesize_agents_md(summary, goal, ports) if make_agents else None
 
-    typer.echo("\nproposed yikes.toml:\n")
+    typer.echo("\n" + _fmt("proposed yikes.toml:", "header") + "\n")
     typer.echo(content)
     notes = data.get("notes")
     if isinstance(notes, str) and notes.strip():
-        typer.echo(f"({notes.strip()})\n")
+        typer.echo(_fmt(f"({notes.strip()})", "muted") + "\n")
     if make_agents:
-        typer.echo("proposed AGENTS.md (new):\n")
+        typer.echo(_fmt("proposed AGENTS.md (new):", "header") + "\n")
         typer.echo(agents_content)
 
     targets = "yikes.toml" + " and AGENTS.md" if make_agents else "yikes.toml"
@@ -675,10 +679,10 @@ def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool, goal: s
             typer.echo("skipped")
             return False
     config_path.write_text(content)
-    typer.echo(f"wrote {config_path}")
+    typer.echo(_fmt(f"wrote {config_path}", "success"))
     if make_agents and agents_content is not None:
         agents_path.write_text(agents_content)
-        typer.echo(f"wrote {agents_path}")
+        typer.echo(_fmt(f"wrote {agents_path}", "success"))
     return True
 
 
@@ -767,7 +771,7 @@ def _seed_session(ref: str, message: str) -> None:
         with _progress("preparing session"):
             controller.wait(ref, timeout=20)
         controller.send(ref, message, submit=False)
-        typer.echo("initial prompt pre-filled — review it and press Enter to send")
+        typer.echo(_fmt("initial prompt pre-filled — review it and press Enter to send", "muted"))
     except Exception as exc:  # best effort: never block the attach on a seed hiccup
         typer.echo(f"yikes: could not pre-fill the prompt ({exc}); type it after attaching", err=True)
 
@@ -779,7 +783,7 @@ def _launch_host(
 
     result = TmuxSessionController().start(name, backend=backend, cwd=project_dir, model=model, replace=new)
     action = "replaced" if result.replaced else "started" if result.created else "reattaching"
-    typer.echo(f"{action}: {name} ({backend.value}) @ {project_dir}")
+    typer.echo(f"{_fmt(action, 'header')}: {name} ({backend.value}) @ {project_dir}")
     if message and result.created:
         _seed_session(name, message)
     command = SessionLifecycle().attach_command(name)
@@ -817,10 +821,10 @@ def _launch_docker(
         settings=AgentSettings(tmux_enabled=True, managed_output_enabled=False, docker_ports=ports),
         session_id=session_id,
     )
-    typer.echo(f"starting isolated {backend.value} session ({name}) for {project_dir} ...")
+    typer.echo(f"{_fmt('starting', 'header')} isolated {backend.value} session ({name}) for {project_dir} ...")
     ensure_interactive_session(options)
     for url in _published_urls(session_id):
-        typer.echo(f"  {url}")
+        typer.echo(f"  {_fmt(url, 'success')}")
     if message and not existed:
         _seed_session(session_id, message)
     command = lifecycle.attach_command(session_id)
@@ -852,12 +856,22 @@ def _sanitize_session_name(raw: str) -> str:
     return cleaned or "session"
 
 
+def _fmt(text: str, kind: str) -> str:
+    """Apply a named style from interactive's palette, but only on a TTY."""
+    if not sys.stdout.isatty():
+        return text
+    from . import interactive
+
+    return getattr(interactive, kind)(text)
+
+
 def _run_menu() -> None:
     if not sys.stdin.isatty():
         app(args=["tui"], standalone_mode=False)
         return
     from . import interactive
 
+    interactive.clear_screen()
     target = interactive.select(
         "yikes! — what would you like to start?",
         [

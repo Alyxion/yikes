@@ -57,7 +57,7 @@ Below the panel it shows an interactive menu — navigate with the arrow keys (o
 - **Set up yikes.toml for this project** — runs `yikes setup` and re-renders
 - **Cancel**
 
-`Esc` or `q` cancels. Pass `-y/--yes`, set `YIKES_NO_PROMPT=1`, or run without a TTY (pipes, scripts) to print the panel and start without the menu. All of yikes' terminal menus use the same arrow-key selection.
+`Esc` or `q` cancels. Pass `-y/--yes`, set `YIKES_NO_PROMPT=1`, or run without a TTY (pipes, scripts) to print the panel and start without the menu. All of yikes' terminal menus share one look: the screen is cleared first, the panel and menu are colorized (labels, the brand, the highlighted row), and the same arrow-key selection is used everywhere. Color and screen-clearing apply only on a real terminal — piped/redirected output stays plain.
 
 ### Initial prompt for a new session
 

@@ -47,6 +47,24 @@ def test_panel_echoes_goal() -> None:
     assert "Ctrl-b d" in panel
 
 
+def test_panel_color_wraps_ansi_but_keeps_substrings() -> None:
+    panel = render_panel(
+        backend="claude",
+        name="shop",
+        location="host",
+        cwd="/srv/shop",
+        reused=False,
+        config_source=None,
+        ports=(),
+        isolated=False,
+        color=True,
+    )
+
+    assert "\x1b[" in panel  # styled
+    assert "Ctrl-b d" in panel  # asserted substrings remain intact
+    assert "yikes close shop" in panel
+
+
 def test_scan_prompt_folds_in_goal() -> None:
     assert scan_prompt(None) == SCAN_PROMPT
     biased = scan_prompt("a vite app on 5173")

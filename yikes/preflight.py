@@ -47,25 +47,36 @@ def render_panel(
     ports: tuple[tuple[str, str], ...],
     isolated: bool,
     goal: str | None = None,
+    color: bool = False,
 ) -> str:
-    """Return the compact pre-flight panel shown before attaching."""
+    """Return the compact pre-flight panel shown before attaching.
+
+    When ``color`` is set, labels and the brand are wrapped in ANSI styling; the
+    plain form is used for non-TTY output and tests.
+    """
+    from .interactive import accent, header, muted
+
+    head = header("yikes!") if color else "yikes!"
+    lab = accent if color else (lambda text: text)
+    key = muted if color else (lambda text: text)
     state = "reattach" if reused else "new"
     config = config_source if config_source else "not configured yet"
     lines = [
-        f"  yikes! · {backend} · {location} · {cwd}",
-        f"  session   {name}   ({state})",
-        f"  config    {config}",
+        f"  {head} {key('·')} {backend} {key('·')} {location} {key('·')} {cwd}",
+        f"  {lab('session')}   {name}   ({state})",
+        f"  {lab('config')}    {config}",
     ]
     if isolated:
         port_text = ", ".join(host for host, _ in ports) if ports else "none"
-        lines.append(f"  ports     {port_text}")
+        lines.append(f"  {lab('ports')}     {port_text}")
     if goal and goal.strip():
-        lines.append(f"  prompt    {goal.strip()}")
+        lines.append(f"  {lab('prompt')}    {goal.strip()}")
+    detach_hint = header("Ctrl-b d") if color else "Ctrl-b d"
     lines.extend(
         [
             "",
-            f"  detach    Ctrl-b d        reattach   yikes {backend}",
-            f"  close     yikes close {name}",
+            f"  {lab('detach')}    {detach_hint}        {lab('reattach')}   yikes {backend}",
+            f"  {lab('close')}     yikes close {name}",
         ]
     )
     return "\n".join(lines)

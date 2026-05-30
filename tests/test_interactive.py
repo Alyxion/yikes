@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from yikes.interactive import run_select
+from yikes.interactive import accent, header, muted, paint, run_select
+
+
+def test_paint_and_palette_wrap_and_reset() -> None:
+    assert paint("x", "36") == "\x1b[36mx\x1b[0m"
+    for styler in (header, accent, muted):
+        out = styler("hello")
+        assert out.startswith("\x1b[")
+        assert out.endswith("\x1b[0m")
+        assert "hello" in out
 
 OPTIONS = [("a", "A"), ("b", "B"), ("c", "C")]
 

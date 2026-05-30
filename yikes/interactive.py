@@ -13,6 +13,45 @@ import sys
 
 Option = tuple[str, str]  # (key, label)
 
+RESET = "\x1b[0m"
+
+
+def paint(text: str, code: str) -> str:
+    """Wrap text in an ANSI SGR code (no-op semantics if the caller skips it)."""
+    return f"\x1b[{code}m{text}{RESET}"
+
+
+def header(text: str) -> str:
+    """Bold-cyan heading."""
+    return paint(text, "1;36")
+
+
+def accent(text: str) -> str:
+    """Cyan label/keyword."""
+    return paint(text, "36")
+
+
+def success(text: str) -> str:
+    """Green confirmation."""
+    return paint(text, "32")
+
+
+def muted(text: str) -> str:
+    """Dim secondary text."""
+    return paint(text, "2")
+
+
+def warn(text: str) -> str:
+    """Yellow warning."""
+    return paint(text, "33")
+
+
+def clear_screen() -> None:
+    """Clear the screen and scrollback, then home the cursor (TTY only)."""
+    if sys.stdout.isatty():
+        sys.stdout.write("\x1b[2J\x1b[3J\x1b[H")
+        sys.stdout.flush()
+
 
 def run_select(options: list[Option], default: int, keys: list[str]) -> str | None:
     """Pure selection loop: fold key names into a chosen option key.
@@ -52,7 +91,7 @@ def select(title: str, options: list[Option], *, default: int = 0) -> str | None
     fd = sys.stdin.fileno()
     index = max(0, min(default, len(options) - 1))
     if title:
-        sys.stdout.write(title + "\n")
+        sys.stdout.write(paint(title, "1;36") + "\n")
     for i, (_, label) in enumerate(options):
         sys.stdout.write(_render_line(i == index, label) + "\n")
     sys.stdout.flush()
@@ -97,8 +136,8 @@ def confirm(question: str, *, default: bool = False) -> bool:
 
 def _render_line(selected: bool, label: str) -> str:
     if selected:
-        return f"\x1b[7m ❯ {label} \x1b[0m"
-    return f"   {label}"
+        return f"\x1b[1;97;44m ❯ {label} \x1b[0m"
+    return paint(f"   {label}", "2")
 
 
 def _usable_tty() -> bool:
