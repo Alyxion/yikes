@@ -85,6 +85,12 @@ For local debugging, tmux I/O tracing is opt-in. Set `YIKES_DEVELOPER_MODE=1` or
 
 The local web UI keeps its login key stable across server restarts by default by storing it in the project `.env` file. Use `yikes web --ephemeral-auth` only when you explicitly want a fresh browser login key for that run. The server is a long-running process and does not hot-reload, so after updating yikes restart it (stop the running server, then `yikes web` again) to pick up new code.
 
+`yikes web --url` prints the full login URL (with the key embedded) and exits without starting the server — handy for opening the UI from another machine over SSH without copying the key by hand. From a Windows PC, after `ssh -L 8760:localhost:8760 you@mac`:
+
+```powershell
+Start-Process (ssh you@mac "cd ~/projects/yikes && yikes web --url")
+```
+
 MCP SSE proxies are started only for enabled MCP servers that need proxying, such as a host stdio MCP attached to a Docker session. Each proxy uses an unguessable per-process token in its SSE and message URLs. Docker sessions may copy local Codex or Claude credentials into their managed workspace so the native CLI can run inside the container; close sessions and remove their Docker volumes when those credentials should disappear.
 
 ---

@@ -482,7 +482,17 @@ if typer:
         dev: bool = typer.Option(False, "--dev/--no-dev", help="Enable development reload endpoints."),
         persistent_auth: bool = typer.Option(True, "--persistent-auth/--ephemeral-auth", help="Reuse the local login key across restarts."),
         open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the web UI in the default browser."),
+        url_only: bool = typer.Option(False, "--url", help="Print the login URL (with key) and exit; do not start the server."),
     ) -> None:
+        from .web_auth import WebAuthConfig
+
+        root = (cwd or Path.cwd()).expanduser()
+        auth_config = WebAuthConfig.load(developer_mode=dev, env_path=root / ".env", persist_auth=persistent_auth)
+        url = auth_config.login_url(host=host, port=port)
+        if url_only:
+            typer.echo(url)
+            return
+
         import threading
         import time
         import webbrowser
@@ -491,11 +501,7 @@ if typer:
 
         from .app_core import YikesAppController
         from .web import create_app
-        from .web_auth import WebAuthConfig
 
-        root = (cwd or Path.cwd()).expanduser()
-        auth_config = WebAuthConfig.load(developer_mode=dev, env_path=root / ".env", persist_auth=persistent_auth)
-        url = auth_config.login_url(host=host, port=port)
         app_instance = create_app(YikesAppController(cwd=root), auth=auth_config)
         if open_browser:
             threading.Thread(target=lambda: (time.sleep(0.8), webbrowser.open(url)), daemon=True).start()

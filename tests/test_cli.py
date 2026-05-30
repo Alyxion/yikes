@@ -435,6 +435,12 @@ def test_relaunch_tui_argv_returns_to_dashboard(monkeypatch) -> None:
     assert tui._relaunch_tui_argv()[2:] == ["tui", "--backend", "codex"]
 
 
+def test_web_url_prints_login_url_without_starting(tmp_path, capsys) -> None:
+    assert cli.main(["web", "--url", "--cwd", str(tmp_path), "--host", "127.0.0.1", "--port", "8760"]) == 0
+    out = capsys.readouterr().out
+    assert "http://127.0.0.1:8760/login?key=" in out
+
+
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     def fake_run_tui(**_kwargs: object) -> None:
         raise AssertionError("run_tui should not be called")
