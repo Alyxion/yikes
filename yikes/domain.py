@@ -73,9 +73,13 @@ class AgentSettings:
     read_roots: tuple[Path, ...] = ()
     write_roots: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServer, ...] = ()
+    docker_ports: tuple[tuple[str, str], ...] = ()
 
     def with_web_search(self, enabled: bool) -> "AgentSettings":
         return replace(self, web_search_enabled=enabled)
+
+    def with_docker_ports(self, ports: tuple[tuple[str, str], ...]) -> "AgentSettings":
+        return replace(self, docker_ports=tuple(ports))
 
     def with_tmux(self, enabled: bool) -> "AgentSettings":
         return replace(self, tmux_enabled=enabled)

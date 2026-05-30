@@ -135,6 +135,26 @@ def test_sandbox_run_command_mounts_configured_host_paths(tmp_path: Path) -> Non
     assert f"{tmp_path}:/workspace/project:rw" in cmd
 
 
+def test_sandbox_run_command_publishes_ports(tmp_path: Path) -> None:
+    session = SandboxManager(tmp_path).create(
+        SandboxConfig(image="example:latest", ports=(("8080", "8080"), ("49200", "5173"))),
+    )
+
+    cmd = session._build_run_cmd()
+
+    assert "127.0.0.1:8080:8080" in cmd
+    assert "127.0.0.1:49200:5173" in cmd
+
+
+def test_sandbox_config_ports_round_trip(tmp_path: Path) -> None:
+    from yikes.sandbox import _config_from_json, _config_to_json
+
+    config = SandboxConfig(image="example:latest", ports=(("8080", "80"),))
+    restored = _config_from_json(_config_to_json(config))
+
+    assert restored.ports == (("8080", "80"),)
+
+
 def test_sandbox_write_file_creates_parent_directory_and_reports_failures(tmp_path: Path, monkeypatch) -> None:
     session = SandboxManager(tmp_path).create(SandboxConfig(image="example:latest"))
     calls: list[dict[str, object]] = []

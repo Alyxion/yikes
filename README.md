@@ -49,13 +49,18 @@ yikes! expects the backend CLIs you want to use to be installed and logged in fo
 ## Common commands
 
 ```bash
-yikes                         # open the terminal app
-yikes tui --backend claude    # start with Claude Code
-yikes tui --backend codex     # start with Codex CLI
+yikes                         # chooser: claude / codex / terminal overview
+yikes claude                  # start or reattach an interactive Claude session here
+yikes codex                   # same, Codex CLI
+yikes claude -i               # run it isolated in Docker (ports from yikes.toml)
 yikes sessions                # list durable sessions
 yikes attach <session-id>     # overtake an attachable session
 yikes close <session-id>      # close one session
 ```
+
+`yikes claude` / `yikes codex` start (or reattach) a real interactive session for the current directory and drop you straight in — as easy as running `claude` or `codex`, but durable and reattachable. The session name defaults to the directory, so re-running in the same project resumes it. Per-project defaults (backend, isolation, published ports, name) live in a committed `yikes.toml`; run `yikes init` to scaffold one. See [the CLI docs](docs/cli-wrapper.md#one-word-launchers) for the full reference, including Docker isolation and port publishing.
+
+`yikes tui` opens the full terminal dashboard (the "terminal overview" choice).
 
 For automation, named tmux sessions are addressable without remembering the generated yikes! session ID:
 

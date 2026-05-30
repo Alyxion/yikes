@@ -655,10 +655,12 @@ def _docker_session_for(
         return existing, container_settings
     server_token = secrets.token_urlsafe(32)
     secret_env = _docker_secret_env() | {"YIKES_SERVER_TOKEN": server_token}
+    ports = _resolve_host_ports(settings.docker_ports)
     return manager.create(
         SandboxConfig(
             image=image,
             mounts=mounts,
+            ports=ports,
             env={"DISABLE_AUTOUPDATER": "1"},
             secret_env=secret_env,
         ),
@@ -670,9 +672,49 @@ def _docker_session_for(
             "cwd_explicit": "true" if cwd_explicit else "false",
             "workspace": str(container_workspace),
             "server_port": "8989",
+            "published_ports": ",".join(f"{host}:{container}" for host, container in ports),
             "managed_output_enabled": "true" if settings.managed_output_enabled else "false",
         },
     ), container_settings
+
+
+def _resolve_host_ports(
+    ports: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    """Keep requested host ports when free; fall back to an ephemeral free port.
+
+    Concurrent isolated sessions in different projects can request the same host
+    port; rather than failing the ``docker run``, the second session is mapped to
+    an open ephemeral port so it still comes up.
+    """
+    resolved: list[tuple[str, str]] = []
+    taken: set[int] = set()
+    for host_port, container_port in ports:
+        chosen = _claim_host_port(host_port, taken)
+        resolved.append((str(chosen), container_port))
+        taken.add(chosen)
+    return tuple(resolved)
+
+
+def _claim_host_port(host_port: str, taken: set[int]) -> int:
+    try:
+        desired = int(host_port)
+    except ValueError:
+        desired = 0
+    if desired and desired not in taken and _host_port_free(desired):
+        return desired
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _host_port_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
 
 
 def _ask_docker_tmux(

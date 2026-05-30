@@ -147,6 +147,9 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Per-user yikes! project overrides (the shared yikes.toml is committed)
+yikes.local.toml
+
 # Environments
 .env
 .envrc

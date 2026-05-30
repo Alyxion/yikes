@@ -53,6 +53,7 @@ class SandboxConfig:
     image: str = DEFAULT_IMAGE
     command: tuple[str, ...] = DEFAULT_SERVER_COMMAND
     mounts: tuple[tuple[str, str, str], ...] = ()
+    ports: tuple[tuple[str, str], ...] = ()
     memory: str | None = None
     cpus: float | None = None
     disk: str | None = None
@@ -226,6 +227,8 @@ class SandboxSession:
             cmd.extend(["--cpus", str(cfg.cpus)])
         if cfg.disk:
             cmd.extend(["--storage-opt", f"size={cfg.disk}"])
+        for host_port, container_port in cfg.ports:
+            cmd.extend(["-p", f"127.0.0.1:{host_port}:{container_port}"])
         cmd.append(cfg.image)
         cmd.extend(cfg.command)
         return cmd
@@ -350,6 +353,7 @@ def _config_to_json(config: SandboxConfig) -> dict[str, object]:
     data = asdict(config)
     data["command"] = list(config.command)
     data["mounts"] = [list(item) for item in config.mounts]
+    data["ports"] = [list(item) for item in config.ports]
     data["security"]["cap_add"] = list(config.security.cap_add)
     data["security"]["tmpfs_mounts"] = [list(item) for item in config.security.tmpfs_mounts]
     return data
@@ -385,6 +389,11 @@ def _config_from_json(data: dict[str, object]) -> SandboxConfig:
             (str(item[0]), str(item[1]), str(item[2]))
             for item in data.get("mounts", [])
             if isinstance(item, (list, tuple)) and len(item) == 3
+        ),
+        ports=tuple(
+            (str(item[0]), str(item[1]))
+            for item in data.get("ports", [])
+            if isinstance(item, (list, tuple)) and len(item) == 2
         ),
         memory=_optional_str(data.get("memory")),
         cpus=float(data["cpus"]) if data.get("cpus") is not None else None,

@@ -17,6 +17,53 @@ bash scripts/install-path.sh
 
 The script is idempotent: it symlinks the venv entrypoint into `~/.local/bin` and appends a single guarded block to `~/.zshrc` and `~/.bashrc` that keeps `~/.local/bin` on PATH. Re-running it refreshes the symlink (for example after recreating the venv) and leaves exactly one guard block per file. A plain `pip install -e .` instead exposes `yikes` on the active interpreter's PATH directly, in which case the helper is not needed.
 
+## One-word launchers
+
+`yikes claude` and `yikes codex` make starting a real interactive session as cheap as running `claude` or `codex` directly, while still going through a durable, reattachable tmux session (never a headless `-p`/`exec` shim).
+
+```bash
+yikes claude            # start or reattach an interactive Claude session for the current dir
+yikes codex             # same, Codex
+yikes claude -n shop    # explicit session name (default: the directory basename)
+yikes claude -i         # run it isolated in Docker, project mounted
+yikes claude --new      # replace any existing session with this name
+```
+
+Behavior:
+
+- **Per-directory by default.** With no `-n/--name`, the session name is the current directory's basename (sanitized to tmux's `A-Za-z0-9_.-` charset). Re-running `yikes claude` in the same project reattaches the same live session instead of spawning a new one.
+- **Concurrency.** Because names are per-directory, parallel sessions live in different project dirs and don't collide. Within one project, repeated launches resume the single session for that backend.
+- **Drop-in.** The command starts (or reuses) the session and then `exec`s you into the live tmux UI, exactly like `yikes attach`. Detach with `Ctrl-b d` and relaunch to come back.
+- **Options.** `-n/--name`, `-i/--isolated` (`-I/--no-isolated`), `--new`, `--model`, `-p/--port` (repeatable, see below), and `--cwd` to target a directory other than the current one.
+
+### `yikes` with no arguments
+
+Bare `yikes` shows a small chooser — claude / codex / terminal overview — and dispatches to the matching launcher or to the full dashboard (`yikes tui`). When stdin is not a TTY (pipes, scripts), it falls back to `yikes tui` so non-interactive use keeps working.
+
+### Isolated sessions (`-i`) and ports
+
+`-i` runs the session inside the existing Docker sandbox (`docker + tmux`): the project directory is mounted, the backend's interactive UI runs in tmux inside the container, and `yikes` `exec`s you into it via `docker exec -it`. The container reuse key is derived from the project directory and backend, so re-running `yikes claude -i` in the same project reattaches the same container.
+
+HTTP ports are published to the host loopback so a dev server started inside the container is reachable from your browser:
+
+- `-p 8080` publishes `127.0.0.1:8080 -> container 8080`. `-p 3000:80` remaps. Repeatable.
+- If a requested host port is already in use (for example a second isolated session elsewhere), `yikes` falls back to a free ephemeral host port instead of failing the container start. The effective `http://localhost:PORT` URLs are printed before you attach.
+- Ports are fixed at container-create time; change them by recreating the session (`--new`).
+
+### Per-project config: `yikes.toml`
+
+Per-project defaults live in a committed `yikes.toml` at (or above) the working directory, discovered by walking up from the current directory. `yikes init` scaffolds one:
+
+```toml
+backend  = "claude"        # what the bare-yikes chooser / default selects here
+isolated = false           # run in Docker by default for this project?
+ports    = [8080, 5173]    # published 127.0.0.1:PORT -> container when isolated
+# name   = "shop"          # session name (default: directory basename)
+# model  = "..."           # backend model override
+```
+
+`ports` entries accept a bare port (`8080`) or a `"host:container"` string. A sibling `yikes.local.toml` (gitignored) overlays personal overrides on top of the shared file — use it for your own ports or backend without touching the committed config. CLI flags (`-i`, `-p`, `-n`, `--model`) override the file for a single run.
+
 ## Top-level shape
 
 ```

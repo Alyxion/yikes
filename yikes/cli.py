@@ -1,11 +1,13 @@
 import json
+import re
 import shlex
 import sys
 import asyncio
+import hashlib
 import os
 from pathlib import Path
 
-from .domain import AgentSettings, Backend, Complexity, Driver, McpServer
+from .domain import AgentSettings, Backend, ChatOptions, Complexity, Driver, McpServer
 from .errors import YikesError
 from .events import DEFAULT_EVENT_STORE, EventLog
 from .prompt_profile import (
@@ -145,6 +147,46 @@ if typer:
             typer.echo(shlex.join(command))
             return
         os.execvp(command[0], command)
+
+    @app.command("claude")
+    def claude(
+        name: str | None = typer.Option(None, "--name", "-n", help="Session name. Default: directory basename."),
+        isolated: bool | None = typer.Option(None, "--isolated/--no-isolated", "-i/-I", help="Run isolated in Docker."),
+        new: bool = typer.Option(False, "--new", help="Replace any existing session with this name."),
+        model: str | None = typer.Option(None, "--model", help="Backend model name."),
+        port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
+        cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+    ) -> None:
+        _launch(Backend.CLAUDE, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd)
+
+    @app.command("codex")
+    def codex(
+        name: str | None = typer.Option(None, "--name", "-n", help="Session name. Default: directory basename."),
+        isolated: bool | None = typer.Option(None, "--isolated/--no-isolated", "-i/-I", help="Run isolated in Docker."),
+        new: bool = typer.Option(False, "--new", help="Replace any existing session with this name."),
+        model: str | None = typer.Option(None, "--model", help="Backend model name."),
+        port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
+        cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+    ) -> None:
+        _launch(Backend.CODEX, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd)
+
+    @app.command("init")
+    def init(
+        cwd: Path | None = typer.Option(None, "--cwd", help="Where to write yikes.toml. Default: current directory."),
+        force: bool = typer.Option(False, "--force", help="Overwrite an existing yikes.toml."),
+    ) -> None:
+        from .project_config import CONFIG_NAME, starter_toml
+
+        target = (cwd or Path.cwd()).expanduser() / CONFIG_NAME
+        if target.exists() and not force:
+            typer.echo(f"yikes: {target} already exists (use --force to overwrite)", err=True)
+            raise typer.Exit(1)
+        target.write_text(starter_toml())
+        typer.echo(f"wrote {target}")
+
+    @app.command("menu")
+    def menu() -> None:
+        _run_menu()
 
     @tmux_app.command("start")
     def tmux_start(
@@ -428,11 +470,11 @@ if typer:
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else sys.argv[1:]
     if not argv:
-        argv = ["tui"]
+        argv = ["menu"]
     if typer:
         try:
-            app(args=argv, standalone_mode=False)
-            return 0
+            result = app(args=argv, standalone_mode=False)
+            return result if isinstance(result, int) else 0
         except typer.Exit as exc:
             return int(exc.exit_code)
         except YikesError as exc:
@@ -441,6 +483,122 @@ def main(argv: list[str] | None = None) -> int:
 
     print("yikes requires the 'typer' dependency. Install the package first: poetry install", file=sys.stderr)
     return 1
+
+
+def _launch(
+    backend: Backend,
+    *,
+    name: str | None,
+    isolated: bool | None,
+    new: bool,
+    model: str | None,
+    port: list[str] | None,
+    cwd: Path | None,
+) -> None:
+    from .project_config import load_project_config, normalize_port
+
+    project_dir = (cwd or Path.cwd()).expanduser()
+    config = load_project_config(project_dir)
+    use_isolated = config.isolated if isolated is None else isolated
+    model = model or config.model
+    session_name = _sanitize_session_name(name or config.name or project_dir.resolve().name)
+    ports = tuple(normalize_port(spec) for spec in port) if port else config.ports
+    if use_isolated:
+        _launch_docker(backend, project_dir, session_name, new=new, model=model, ports=ports)
+    else:
+        _launch_host(backend, project_dir, session_name, new=new, model=model)
+
+
+def _launch_host(backend: Backend, project_dir: Path, name: str, *, new: bool, model: str | None) -> None:
+    from .session_inventory import SessionLifecycle, TmuxSessionController
+
+    result = TmuxSessionController().start(name, backend=backend, cwd=project_dir, model=model, replace=new)
+    action = "replaced" if result.replaced else "started" if result.created else "reattaching"
+    typer.echo(f"{action}: {name} ({backend.value}) @ {project_dir}")
+    command = SessionLifecycle().attach_command(name)
+    if command is None:
+        typer.echo(f"yikes: could not attach to {name}", err=True)
+        raise typer.Exit(1)
+    os.execvp(command[0], command)
+
+
+def _launch_docker(
+    backend: Backend,
+    project_dir: Path,
+    name: str,
+    *,
+    new: bool,
+    model: str | None,
+    ports: tuple[tuple[str, str], ...],
+) -> None:
+    from .drivers import ensure_interactive_session
+    from .session_inventory import SessionLifecycle
+
+    session_id = _docker_session_id(backend, project_dir)
+    lifecycle = SessionLifecycle()
+    if new:
+        lifecycle.close(session_id)
+    options = ChatOptions(
+        backend=backend,
+        driver=Driver.DOCKER,
+        cwd=project_dir,
+        cwd_explicit=True,
+        model=model,
+        settings=AgentSettings(tmux_enabled=True, managed_output_enabled=False, docker_ports=ports),
+        session_id=session_id,
+    )
+    typer.echo(f"starting isolated {backend.value} session ({name}) for {project_dir} ...")
+    ensure_interactive_session(options)
+    for url in _published_urls(session_id):
+        typer.echo(f"  {url}")
+    command = lifecycle.attach_command(session_id)
+    if command is None:
+        typer.echo("yikes: could not attach to the container session", err=True)
+        raise typer.Exit(1)
+    os.execvp(command[0], command)
+
+
+def _docker_session_id(backend: Backend, project_dir: Path) -> str:
+    digest = hashlib.sha1(f"{backend.value}:{project_dir.resolve()}".encode()).hexdigest()
+    return f"ykd{digest[:13]}"
+
+
+def _published_urls(session_id: str) -> list[str]:
+    from .sandbox import SandboxManager
+    from .session_inventory import SessionLifecycle
+
+    resolved = SessionLifecycle().resolve_session_id(session_id) or session_id
+    sandbox = SandboxManager().get(resolved)
+    if sandbox is None:
+        return []
+    published = sandbox.meta.user_data.get("published_ports", "")
+    return [f"http://localhost:{entry.split(':', 1)[0]}" for entry in published.split(",") if entry]
+
+
+def _sanitize_session_name(raw: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-")[:80]
+    return cleaned or "session"
+
+
+def _run_menu() -> None:
+    if not sys.stdin.isatty():
+        app(args=["tui"], standalone_mode=False)
+        return
+    typer.echo("yikes! — what would you like to start?")
+    typer.echo("  [1] claude     interactive Claude session for this directory")
+    typer.echo("  [2] codex      interactive Codex session for this directory")
+    typer.echo("  [3] overview   full terminal dashboard")
+    choice = input("> ").strip().lower()
+    routes = {
+        "1": "claude", "claude": "claude", "c": "claude",
+        "2": "codex", "codex": "codex", "x": "codex",
+        "3": "tui", "overview": "tui", "o": "tui", "": "tui",
+    }
+    target = routes.get(choice)
+    if target is None:
+        typer.echo(f"yikes: unknown choice {choice!r}", err=True)
+        raise typer.Exit(1)
+    app(args=[target], standalone_mode=False)
 
 
 def _has_settings_cli(

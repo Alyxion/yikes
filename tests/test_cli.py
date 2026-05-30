@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from pathlib import Path
 
+import pytest
+
 from yikes import AgentSettings, Backend, Complexity, Driver, DurableSessionManager, RuntimeKind, RuntimeRef
 from yikes import cli
 import yikes.session_inventory
@@ -11,7 +13,11 @@ import yikes.tui
 import yikes.remote
 
 
-def test_no_args_launches_tui_by_default(monkeypatch) -> None:
+def _fake_stdin(*, tty: bool) -> SimpleNamespace:
+    return SimpleNamespace(isatty=lambda: tty)
+
+
+def test_no_args_menu_falls_back_to_tui_without_tty(monkeypatch) -> None:
     called: dict[str, object] = {}
 
     def fake_run_tui(
@@ -34,6 +40,7 @@ def test_no_args_launches_tui_by_default(monkeypatch) -> None:
             settings=settings,
         )
 
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=False))
     monkeypatch.setattr(yikes.tui, "run_tui", fake_run_tui)
 
     assert cli.main([]) == 0
@@ -41,6 +48,93 @@ def test_no_args_launches_tui_by_default(monkeypatch) -> None:
     assert called["driver"] is None
     assert called["complexity"] is None
     assert called["settings"] is None
+
+
+def test_menu_routes_choice_to_codex(monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+    monkeypatch.setattr("builtins.input", lambda *_args: "2")
+    routed: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_launch", lambda backend, **_kw: routed.update(backend=backend))
+
+    assert cli.main(["menu"]) == 0
+    assert routed["backend"] == Backend.CODEX
+
+
+def test_claude_host_launch_starts_and_execs_attach(tmp_path, monkeypatch) -> None:
+    started: dict[str, object] = {}
+
+    def fake_start(self, name, *, backend, cwd, model=None, replace=False):
+        started.update(name=name, backend=backend, cwd=cwd, replace=replace)
+        return SimpleNamespace(
+            id="x", name=name, backend=backend.value, socket="s", session=name, created=True, replaced=False
+        )
+
+    execd: dict[str, object] = {}
+    monkeypatch.setattr(yikes.session_inventory.TmuxSessionController, "start", fake_start)
+    monkeypatch.setattr(
+        yikes.session_inventory.SessionLifecycle, "attach_command", lambda self, ref: ["tmux", "attach", ref]
+    )
+    monkeypatch.setattr(cli.os, "execvp", lambda file, args: execd.update(file=file, args=args))
+
+    assert cli.main(["claude", "-n", "demo", "--cwd", str(tmp_path)]) == 0
+    assert started["name"] == "demo"
+    assert started["backend"] == Backend.CLAUDE
+    assert started["replace"] is False
+    assert execd["file"] == "tmux"
+
+
+def test_launch_name_defaults_to_sanitized_directory(tmp_path, monkeypatch) -> None:
+    project = tmp_path / "Shop App"
+    project.mkdir()
+    started: dict[str, object] = {}
+
+    def fake_start(self, name, *, backend, cwd, model=None, replace=False):
+        started.update(name=name)
+        return SimpleNamespace(
+            id="x", name=name, backend=backend.value, socket="s", session=name, created=False, replaced=False
+        )
+
+    monkeypatch.setattr(yikes.session_inventory.TmuxSessionController, "start", fake_start)
+    monkeypatch.setattr(yikes.session_inventory.SessionLifecycle, "attach_command", lambda self, ref: ["true"])
+    monkeypatch.setattr(cli.os, "execvp", lambda *_a: None)
+
+    assert cli.main(["codex", "--cwd", str(project)]) == 0
+    assert started["name"] == "Shop-App"
+
+
+def test_config_isolated_and_ports_route_to_docker(tmp_path, monkeypatch) -> None:
+    (tmp_path / "yikes.toml").write_text("isolated = true\nports = [8080]\n")
+    captured: dict[str, object] = {}
+
+    def fake_docker(backend, project_dir, name, *, new, model, ports):
+        captured.update(backend=backend, name=name, ports=ports)
+
+    monkeypatch.setattr(cli, "_launch_docker", fake_docker)
+    monkeypatch.setattr(cli, "_launch_host", lambda *a, **k: pytest.fail("expected docker path"))
+
+    assert cli.main(["codex", "--cwd", str(tmp_path)]) == 0
+    assert captured["backend"] == Backend.CODEX
+    assert captured["ports"] == (("8080", "8080"),)
+
+
+def test_port_flag_overrides_config(tmp_path, monkeypatch) -> None:
+    (tmp_path / "yikes.toml").write_text("isolated = true\nports = [8080]\n")
+    captured: dict[str, object] = {}
+
+    def fake_docker(backend, project_dir, name, *, new, model, ports):
+        captured.update(ports=ports)
+
+    monkeypatch.setattr(cli, "_launch_docker", fake_docker)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path), "-p", "3000:80"]) == 0
+    assert captured["ports"] == (("3000", "80"),)
+
+
+def test_init_writes_then_refuses_then_forces(tmp_path) -> None:
+    assert cli.main(["init", "--cwd", str(tmp_path)]) == 0
+    assert (tmp_path / "yikes.toml").exists()
+    assert cli.main(["init", "--cwd", str(tmp_path)]) == 1
+    assert cli.main(["init", "--cwd", str(tmp_path), "--force"]) == 0
 
 
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
