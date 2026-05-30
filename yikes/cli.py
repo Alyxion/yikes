@@ -476,7 +476,7 @@ if typer:
 
     @app.command("web")
     def web(
-        host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
+        host: str = typer.Option("0.0.0.0", "--host", help="Bind address. Default serves all interfaces; use 127.0.0.1 for loopback only."),
         port: int = typer.Option(8760, "--port", "-p", help="HTTP port."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Default start directory for new sessions."),
         dev: bool = typer.Option(False, "--dev/--no-dev", help="Enable development reload endpoints."),

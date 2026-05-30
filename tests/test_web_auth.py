@@ -91,6 +91,24 @@ def test_web_requires_cookie_and_login_key_sets_cookie(tmp_path: Path, monkeypat
             assert ws.receive_json()["state"]["brand"] == "yikes!"
 
 
+def test_web_login_throttles_brute_force(tmp_path: Path) -> None:
+    auth = WebAuthConfig(secret="test-secret", login_key="right-key", developer_mode=True)
+    app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)
+
+    with TestClient(app) as client:
+        # loading the page without a key is never throttled
+        assert client.get("/login").status_code == 200
+
+        first = client.get("/login?key=wrong", follow_redirects=False)
+        assert first.status_code == 401
+        assert "retry-after" in {k.lower() for k in first.headers}
+
+        # an immediate second guess is locked out
+        second = client.get("/login?key=wrong", follow_redirects=False)
+        assert second.status_code == 429
+        assert "retry-after" in {k.lower() for k in second.headers}
+
+
 def test_web_term_open_spawns_attach_bridge() -> None:
     class FakeController:
         def attach_command(self, session_id=None):

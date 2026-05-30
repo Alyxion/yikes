@@ -197,18 +197,18 @@ yikes web --host 0.0.0.0 --port 9000 --no-open
 yikes web --url                 # print the login URL (with key) and exit; don't start
 ```
 
-Flags: `--host` (default `127.0.0.1`, loopback only), `--port` (default `8760`), `--cwd` (default start dir for new sessions), `--dev/--no-dev`, `--open/--no-open`, `--persistent-auth/--ephemeral-auth`, and `--url`.
+Flags: `--host` (default `0.0.0.0`, all interfaces; use `127.0.0.1` for loopback only), `--port` (default `8760`), `--cwd` (default start dir for new sessions), `--dev/--no-dev`, `--open/--no-open`, `--persistent-auth/--ephemeral-auth`, and `--url`.
 
-**Authentication.** The UI is gated by a login key. By default it is persisted in the project `.env` as `YIKES_WEB_LOGIN_KEY` and reused across restarts; `/login` accepts the key on a form or as `?key=…`, then sets a session cookie. `--ephemeral-auth` mints a throwaway key for that run instead of persisting one. `yikes web --url` reads the persisted key and prints the full `…/login?key=…` URL without starting the server — useful for logging in from another machine without copying the key by hand.
+**Authentication.** The UI is gated by a login key. By default it is persisted in the project `.env` as `YIKES_WEB_LOGIN_KEY` and reused across restarts; `/login` accepts the key on a form or as `?key=…`, then sets a session cookie. `--ephemeral-auth` mints a throwaway key for that run instead of persisting one. `yikes web --url` reads the persisted key and prints the full `…/login?key=…` URL without starting the server — useful for logging in from another machine without copying the key by hand. The key is a 256-bit random token compared in constant time, and login is **rate-limited per client**: each wrong guess locks that address out for an exponentially growing window (1s, 2s, 4s, … capped at 60s) and returns `429`, so the key cannot be brute-forced even though the server listens on the network by default.
 
 **No hot-reload.** The server is a long-running process that serves whatever code was imported at startup. After updating yikes (or landing changes that touch the web server or the modules it imports), restart it: stop the running server (it does not restart a live port itself) and run `yikes web` again. Keep it durable with a detached `tmux new-session -d -s yikes-web-<port> "yikes web …"` so it survives the shell.
 
-**Advertised URLs.** On startup the server prints a login URL for every host it is actually reachable on. Bound to loopback (the default) it prints the `127.0.0.1` URL plus a hint showing the LAN address and the `--host 0.0.0.0` command to make it reachable. Bound to `--host 0.0.0.0` it prints a working `http://<lan-ip>:<port>/login?key=…` for each real network interface, so you can copy one straight to another machine. `yikes web --url` prints a single best URL — the LAN address when bound to all interfaces, otherwise the bind host. If the port is already in use (e.g. another `yikes web` is running), it reports that cleanly instead of a bind traceback.
+**Advertised URLs.** On startup the server prints a login URL for every host it is actually reachable on. Bound to all interfaces (the default) it prints a working `http://<lan-ip>:<port>/login?key=…` for each real network interface, so you can copy one straight to another machine. Bound to `--host 127.0.0.1` it prints just the loopback URL plus a hint showing the LAN address and the `--host 0.0.0.0` command to make it reachable. `yikes web --url` prints a single best URL — the LAN address when bound to all interfaces, otherwise the bind host. If the port is already in use (e.g. another `yikes web` is running), it reports that cleanly instead of a bind traceback.
 
 **Remote access.** Two ways to reach it from another machine:
 
-- *Same network, direct:* start with `--host 0.0.0.0`, then open one of the printed `http://<lan-ip>:<port>/login?key=…` URLs. The login key is then the only guard, so keep it secret (or front it with a mesh VPN such as Tailscale).
-- *Secure tunnel (keeps it loopback-only):* SSH local-forward. From a Windows PC:
+- *Same network, direct (default):* the server already listens on all interfaces, so open one of the printed `http://<lan-ip>:<port>/login?key=…` URLs from the other machine. The login key (rate-limited, 256-bit) is the guard; front it with a mesh VPN such as Tailscale if you want it reachable beyond the LAN.
+- *Loopback only + secure tunnel:* start with `--host 127.0.0.1` and SSH local-forward. From a Windows PC:
 
   ```powershell
   ssh -L 8760:localhost:8760 you@mac          # tunnel (separate window)

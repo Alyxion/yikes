@@ -21,7 +21,7 @@ class WebLaunchResult:
 
 def launch_web_ui(
     *,
-    host: str = "127.0.0.1",
+    host: str = "0.0.0.0",
     port: int = 8760,
     cwd: Path | None = None,
     developer_mode: bool = False,

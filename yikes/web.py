@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 from .app_core import YikesAppController
 from .terminal_bridge import WebTerminalManager, handle_terminal_ws
-from .web_auth import WebAuthConfig, developer_mode_from_env
+from .web_auth import LoginThrottle, WebAuthConfig, developer_mode_from_env
 from .web_handler import WebMessageHandler
 
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
     from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
 except ModuleNotFoundError:  # pragma: no cover - dependency guard
@@ -48,6 +49,7 @@ def create_app(
     app.state.yikes_terminals = WebTerminalManager()
     app.state.yikes_web_handler = WebMessageHandler(app.state.yikes, app.state.yikes_terminals)
     app.state.yikes_auth = auth or WebAuthConfig.load(developer_mode=developer_mode_from_env())
+    app.state.yikes_login_throttle = LoginThrottle()
     _mount_llming_stage(app, use_stage=use_stage)
 
     @app.middleware("http")
@@ -63,8 +65,22 @@ def create_app(
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/login")
-    async def login(key: str | None = None, next: str = "/") -> HTMLResponse:
+    async def login(request: Request, key: str | None = None, next: str = "/") -> HTMLResponse:
+        # Loading the page (no key) is never throttled; only guesses are.
+        if not key:
+            return HTMLResponse(_login_page(invalid=False, locked=False), status_code=200)
+
+        throttle: LoginThrottle = app.state.yikes_login_throttle
+        client = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        wait = throttle.retry_after(client, now)
+        if wait > 0:
+            response = HTMLResponse(_login_page(invalid=True, locked=True), status_code=429)
+            response.headers["Retry-After"] = str(int(wait) + 1)
+            return response
+
         if app.state.yikes_auth.verify_login_key(key):
+            throttle.record_success(client)
             response = RedirectResponse(_safe_next(next), status_code=303)
             response.set_cookie(
                 app.state.yikes_auth.cookie_name,
@@ -74,8 +90,14 @@ def create_app(
                 max_age=app.state.yikes_auth.cookie_ttl_seconds,
             )
             return response
-        status = 401 if key else 200
-        return HTMLResponse(_login_page(invalid=bool(key)), status_code=status)
+
+        delay = throttle.record_failure(client, now)
+        # Small constant latency per failed guess; the (longer) lockout below is
+        # what actually throttles repeated attempts.
+        await asyncio.sleep(0.5)
+        response = HTMLResponse(_login_page(invalid=True, locked=False), status_code=401)
+        response.headers["Retry-After"] = str(int(delay) + 1)
+        return response
 
     @app.get("/")
     async def index() -> HTMLResponse:
@@ -179,8 +201,13 @@ def _static_stamp() -> float:
     return stamp
 
 
-def _login_page(*, invalid: bool) -> str:
-    error = "<p class='error'>Invalid or expired login key.</p>" if invalid else ""
+def _login_page(*, invalid: bool, locked: bool = False) -> str:
+    if locked:
+        error = "<p class='error'>Too many attempts — wait a moment and try again.</p>"
+    elif invalid:
+        error = "<p class='error'>Invalid or expired login key.</p>"
+    else:
+        error = ""
     return f"""<!doctype html>
 <html lang="en">
 <head>

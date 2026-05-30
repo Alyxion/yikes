@@ -92,6 +92,43 @@ class WebAuthConfig:
         return expires >= int(time.time())
 
 
+@dataclass
+class _LoginAttempts:
+    failures: int = 0
+    locked_until: float = 0.0
+
+
+class LoginThrottle:
+    """Per-client brute-force defense for the login key.
+
+    Each failed attempt locks that client out for an exponentially growing
+    window (base, 2x, 4x, … capped), so an attacker can make only a handful of
+    guesses per minute. A successful login clears the client's record.
+    """
+
+    def __init__(self, *, base_delay: float = 1.0, max_delay: float = 60.0) -> None:
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self._clients: dict[str, _LoginAttempts] = {}
+
+    def retry_after(self, client: str, now: float) -> float:
+        """Seconds the client must wait before another attempt is accepted."""
+        record = self._clients.get(client)
+        if record is None:
+            return 0.0
+        return max(0.0, record.locked_until - now)
+
+    def record_failure(self, client: str, now: float) -> float:
+        record = self._clients.setdefault(client, _LoginAttempts())
+        record.failures += 1
+        delay = min(self.base_delay * (2 ** (record.failures - 1)), self.max_delay)
+        record.locked_until = now + delay
+        return delay
+
+    def record_success(self, client: str) -> None:
+        self._clients.pop(client, None)
+
+
 def developer_mode_from_env(default: bool = False) -> bool:
     value = os.environ.get("YIKES_WEB_DEV")
     if value is None:
