@@ -137,6 +137,86 @@ def test_init_writes_then_refuses_then_forces(tmp_path) -> None:
     assert cli.main(["init", "--cwd", str(tmp_path), "--force"]) == 0
 
 
+def _stub_host_launch(monkeypatch) -> dict[str, object]:
+    state: dict[str, object] = {"started": False}
+
+    def fake_start(self, name, *, backend, cwd, model=None, replace=False):
+        state["started"] = True
+        state["name"] = name
+        return SimpleNamespace(
+            id="x", name=name, backend=backend.value, socket="s", session=name, created=True, replaced=False
+        )
+
+    monkeypatch.setattr(yikes.session_inventory.TmuxSessionController, "start", fake_start)
+    monkeypatch.setattr(yikes.session_inventory.SessionLifecycle, "attach_command", lambda self, ref: ["true"])
+    monkeypatch.setattr(cli.os, "execvp", lambda *_a: None)
+    return state
+
+
+def test_preflight_panel_prints_without_tty(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=False))
+    state = _stub_host_launch(monkeypatch)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Ctrl-b d" in out
+    assert state["started"] is True
+
+
+def test_preflight_cancel_does_not_start(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+    monkeypatch.setattr("builtins.input", lambda *_a: "q")
+    state = _stub_host_launch(monkeypatch)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path)]) == 0
+    assert state["started"] is False
+
+
+def test_preflight_setup_then_start(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+    answers = iter(["s", ""])
+    monkeypatch.setattr("builtins.input", lambda *_a: next(answers))
+    setup_calls: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli, "_run_setup", lambda backend, project_dir, *, assume_yes: setup_calls.update(backend=backend) or True
+    )
+    state = _stub_host_launch(monkeypatch)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path)]) == 0
+    assert setup_calls["backend"] == Backend.CLAUDE
+    assert state["started"] is True
+
+
+def test_yes_flag_skips_prompt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+
+    def boom(*_a):  # input must not be called
+        raise AssertionError("prompt should be skipped with --yes")
+
+    monkeypatch.setattr("builtins.input", boom)
+    state = _stub_host_launch(monkeypatch)
+
+    assert cli.main(["claude", "--cwd", str(tmp_path), "--yes"]) == 0
+    assert state["started"] is True
+
+
+def test_setup_writes_config_from_scan(tmp_path, monkeypatch) -> None:
+    import yikes.drivers
+
+    monkeypatch.setattr(
+        yikes.drivers,
+        "ask_backend",
+        lambda *a, **k: '{"ports": [8080, 5173], "backend": "codex", "notes": "vite app"}',
+    )
+
+    assert cli.main(["setup", "--cwd", str(tmp_path), "--yes"]) == 0
+    from yikes.project_config import load_project_config
+
+    config = load_project_config(tmp_path)
+    assert config.backend == "codex"
+    assert config.ports == (("8080", "8080"), ("5173", "5173"))
+
+
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     def fake_run_tui(**_kwargs: object) -> None:
         raise AssertionError("run_tui should not be called")

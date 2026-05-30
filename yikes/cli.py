@@ -156,8 +156,9 @@ if typer:
         model: str | None = typer.Option(None, "--model", help="Backend model name."),
         port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+        yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight panel prompt and start immediately."),
     ) -> None:
-        _launch(Backend.CLAUDE, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd)
+        _launch(Backend.CLAUDE, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, yes=yes)
 
     @app.command("codex")
     def codex(
@@ -167,8 +168,9 @@ if typer:
         model: str | None = typer.Option(None, "--model", help="Backend model name."),
         port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+        yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight panel prompt and start immediately."),
     ) -> None:
-        _launch(Backend.CODEX, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd)
+        _launch(Backend.CODEX, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, yes=yes)
 
     @app.command("init")
     def init(
@@ -183,6 +185,19 @@ if typer:
             raise typer.Exit(1)
         target.write_text(starter_toml())
         typer.echo(f"wrote {target}")
+
+    @app.command("setup")
+    def setup(
+        backend: Backend | None = typer.Option(None, "--backend", "-b", help="Backend to run the scan. Default: yikes.toml or claude."),
+        cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
+        yes: bool = typer.Option(False, "--yes", "-y", help="Write yikes.toml without confirmation."),
+    ) -> None:
+        from .project_config import load_project_config
+
+        project_dir = (cwd or Path.cwd()).expanduser()
+        resolved_backend = backend or _config_backend(load_project_config(project_dir)) or Backend.CLAUDE
+        if not _run_setup(resolved_backend, project_dir, assume_yes=yes):
+            raise typer.Exit(1)
 
     @app.command("menu")
     def menu() -> None:
@@ -494,19 +509,128 @@ def _launch(
     model: str | None,
     port: list[str] | None,
     cwd: Path | None,
+    yes: bool = False,
 ) -> None:
     from .project_config import load_project_config, normalize_port
 
     project_dir = (cwd or Path.cwd()).expanduser()
-    config = load_project_config(project_dir)
-    use_isolated = config.isolated if isolated is None else isolated
-    model = model or config.model
-    session_name = _sanitize_session_name(name or config.name or project_dir.resolve().name)
-    ports = tuple(normalize_port(spec) for spec in port) if port else config.ports
+    while True:
+        config = load_project_config(project_dir)
+        use_isolated = config.isolated if isolated is None else isolated
+        resolved_model = model or config.model
+        session_name = _sanitize_session_name(name or config.name or project_dir.resolve().name)
+        ports = tuple(normalize_port(spec) for spec in port) if port else config.ports
+        action = _preflight(
+            backend,
+            project_dir,
+            session_name,
+            isolated=use_isolated,
+            ports=ports,
+            config_source=str(config.source) if config.source else None,
+            assume_yes=yes,
+        )
+        if action == "cancel":
+            return
+        if action == "setup":
+            _run_setup(backend, project_dir, assume_yes=False)
+            continue  # re-render the panel with the freshly written config
+        break
     if use_isolated:
-        _launch_docker(backend, project_dir, session_name, new=new, model=model, ports=ports)
+        _launch_docker(backend, project_dir, session_name, new=new, model=resolved_model, ports=ports)
     else:
-        _launch_host(backend, project_dir, session_name, new=new, model=model)
+        _launch_host(backend, project_dir, session_name, new=new, model=resolved_model)
+
+
+def _preflight(
+    backend: Backend,
+    project_dir: Path,
+    name: str,
+    *,
+    isolated: bool,
+    ports: tuple[tuple[str, str], ...],
+    config_source: str | None,
+    assume_yes: bool,
+) -> str:
+    """Print the pre-flight panel and return "start", "setup", or "cancel"."""
+    from .preflight import render_panel
+
+    panel = render_panel(
+        backend=backend.value,
+        name=name,
+        location="docker" if isolated else "host",
+        cwd=str(project_dir),
+        reused=_session_exists(backend, project_dir, name, isolated=isolated),
+        config_source=config_source,
+        ports=ports,
+        isolated=isolated,
+    )
+    typer.echo(panel)
+    if assume_yes or os.environ.get("YIKES_NO_PROMPT") or not sys.stdin.isatty():
+        return "start"
+    choice = input("> ").strip().lower()
+    if choice in ("", "y", "yes", "start"):
+        return "start"
+    if choice in ("s", "setup", "scan"):
+        return "setup"
+    return "cancel"
+
+
+def _run_setup(backend: Backend, project_dir: Path, *, assume_yes: bool) -> bool:
+    """Scan the repo via the backend and write yikes.toml. Returns True on write."""
+    from .drivers import ask_backend
+    from .preflight import SCAN_PROMPT, parse_scan_result, ports_from_scan, synthesize_config
+    from .project_config import CONFIG_NAME
+
+    typer.echo(f"scanning {project_dir} with {backend.value} ...")
+    try:
+        reply = ask_backend(
+            backend,
+            Driver.DIRECT,
+            SCAN_PROMPT,
+            cwd=project_dir,
+            timeout=180.0,
+            model=None,
+            settings=AgentSettings(),
+        )
+        data = parse_scan_result(reply)
+    except YikesError as exc:
+        typer.echo(f"yikes: scan failed: {exc}", err=True)
+        return False
+    except ValueError as exc:
+        typer.echo(f"yikes: could not read scan result: {exc}", err=True)
+        return False
+    ports = ports_from_scan(data)
+    scan_backend = data.get("backend") if data.get("backend") in ("claude", "codex") else None
+    content = synthesize_config(ports, scan_backend)
+    typer.echo("\nproposed yikes.toml:\n")
+    typer.echo(content)
+    notes = data.get("notes")
+    if isinstance(notes, str) and notes.strip():
+        typer.echo(f"({notes.strip()})\n")
+    target = project_dir / CONFIG_NAME
+    if not assume_yes and sys.stdin.isatty():
+        answer = input(f"write {target}? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            typer.echo("skipped")
+            return False
+    target.write_text(content)
+    typer.echo(f"wrote {target}")
+    return True
+
+
+def _session_exists(backend: Backend, project_dir: Path, name: str, *, isolated: bool) -> bool:
+    from .session_inventory import SessionLifecycle
+
+    ref = _docker_session_id(backend, project_dir) if isolated else name
+    return SessionLifecycle().resolve_session_id(ref) is not None
+
+
+def _config_backend(config: object) -> Backend | None:
+    value = getattr(config, "backend", None)
+    try:
+        return Backend(value) if value else None
+    except ValueError:
+        return None
 
 
 def _launch_host(backend: Backend, project_dir: Path, name: str, *, new: bool, model: str | None) -> None:

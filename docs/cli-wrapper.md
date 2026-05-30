@@ -36,6 +36,33 @@ Behavior:
 - **Drop-in.** The command starts (or reuses) the session and then `exec`s you into the live tmux UI, exactly like `yikes attach`. Detach with `Ctrl-b d` and relaunch to come back.
 - **Options.** `-n/--name`, `-i/--isolated` (`-I/--no-isolated`), `--new`, `--model`, `-p/--port` (repeatable, see below), and `--cwd` to target a directory other than the current one.
 
+### Pre-flight panel
+
+Because the backend's TUI takes over the screen on attach, each launch first prints a short panel so the mapped ports and the leave/return keys are in front of you:
+
+```
+  yikes! · claude · host · ~/projects/shop
+  session   shop   (reattach)
+  config    ~/projects/shop/yikes.toml
+  ports     8080, 5173
+
+  detach    Ctrl-b d        reattach   yikes claude
+  close     yikes close shop
+
+  [Enter] start   ·   [s] scan & set up yikes.toml   ·   [q] cancel
+```
+
+In an interactive terminal it waits for one keypress: `Enter` (the default) starts, `s` runs the agentic setup below and re-renders, `q` cancels without launching. Pass `-y/--yes`, set `YIKES_NO_PROMPT=1`, or run without a TTY (pipes, scripts) to print the panel and start without the prompt.
+
+### `yikes setup` — agentic yikes.toml
+
+`yikes setup` (and the `s` option above) runs the backend **once in direct CLI mode** (`ask_backend(..., Driver.DIRECT, ...)`, not a tmux session) to inspect the repository — package.json scripts, vite/next/webpack config, docker-compose, Dockerfile `EXPOSE`, `.env`, Procfile — and report the HTTP ports it serves as a small JSON object. yikes then synthesizes a `yikes.toml` from that result, prints it for review, and writes it on confirmation (`--yes` skips the prompt). The instruction sent to the backend is brand-free: it asks for ports as JSON and yikes builds the file, so nothing about yikes! is injected into the backend prompt.
+
+```bash
+yikes setup              # scan with the configured/default backend, confirm, write
+yikes setup -b codex -y  # scan with Codex, write yikes.toml without confirmation
+```
+
 ### `yikes` with no arguments
 
 Bare `yikes` shows a small chooser — claude / codex / terminal overview — and dispatches to the matching launcher or to the full dashboard (`yikes tui`). When stdin is not a TTY (pipes, scripts), it falls back to `yikes tui` so non-interactive use keeps working.
