@@ -31,7 +31,7 @@ yikes claude --new      # replace any existing session with this name
 
 Behavior:
 
-- **Per-directory by default.** With no `-n/--name`, the session name is the current directory's basename (sanitized to tmux's `A-Za-z0-9_.-` charset). Re-running `yikes claude` in the same project reattaches the same live session instead of spawning a new one.
+- **Per-directory by default.** With no `-n/--name`, the session name is the current directory's basename (sanitized to tmux's `A-Za-z0-9_.-` charset). Re-running `yikes claude` in the same project reattaches the same live session instead of spawning a new one. In the dashboard tabs and `yikes sessions`, the session is shown by a git-relative label — `<repo>/<folder>` inside a repository (e.g. `fckten/dashboard`), or just the folder name outside one — unless you passed a custom `-n` name, which is shown as-is.
 - **Concurrency.** Because names are per-directory, parallel sessions live in different project dirs and don't collide. Within one project, repeated launches resume the single session for that backend.
 - **Drop-in.** The command starts (or reuses) the session and then `exec`s you into the live tmux UI, exactly like `yikes attach`. Detach with `Ctrl-b d` and relaunch to come back.
 - **Options.** `-n/--name`, `-i/--isolated` (`-I/--no-isolated`), `--new`, `--model`, `-p/--port` (repeatable, see below), and `--cwd` to target a directory other than the current one.

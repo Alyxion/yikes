@@ -5,6 +5,7 @@ import re
 import shlex
 import tempfile
 import time
+from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -128,15 +129,60 @@ class SessionInventory:
 
 
 def _session_display_name(user_data: dict[str, str], cwd: "Path | None") -> str:
-    """A human-friendly session name: the custom name, else the project dir."""
-    name = (user_data.get("name") or "").strip()
-    if name:
-        return name
-    if cwd is not None and str(cwd):
-        base = Path(str(cwd)).name
-        if base:
-            return base
-    return ""
+    """A human-friendly session name.
+
+    A genuinely custom name (one the user passed) wins. Otherwise derive a label
+    from the project: ``<git-repo>/<current-folder>`` inside a repo, or just the
+    folder name outside one.
+    """
+    stored = (user_data.get("name") or "").strip()
+    if cwd is None:
+        return stored
+    if stored and not _looks_auto(stored, cwd):
+        return stored
+    return project_label(cwd) or stored
+
+
+def _looks_auto(stored: str, cwd: "Path | None") -> bool:
+    """True when ``stored`` is just the auto-derived folder name, not a custom one."""
+    if cwd is None:
+        return False
+    base = Path(str(cwd)).name
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip("-")[:80]
+    return stored in {base, sanitized}
+
+
+@lru_cache(maxsize=256)
+def _git_root(cwd: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def project_label(cwd: "Path | None") -> str:
+    """``<git-repo>/<current-folder>`` for a repo subdir, else the folder name."""
+    if cwd is None:
+        return ""
+    cwd = Path(str(cwd))
+    root = _git_root(str(cwd))
+    if root:
+        root_path = Path(root)
+        try:
+            same = cwd.resolve() == root_path.resolve()
+        except OSError:
+            same = str(cwd) == root
+        return root_path.name if same else f"{root_path.name}/{cwd.name}"
+    return cwd.name
 
 
 def _runtime_detail(runtime: object) -> str:

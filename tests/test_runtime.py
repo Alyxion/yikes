@@ -143,6 +143,24 @@ def test_session_display_name_prefers_custom_then_dir() -> None:
     assert _session_display_name({}, None) == ""
 
 
+def test_project_label_uses_git_root_and_subfolder(tmp_path: Path) -> None:
+    import subprocess
+
+    from yikes.session_inventory import _git_root, _session_display_name, project_label
+
+    repo = tmp_path / "fckten"
+    sub = repo / "experiments" / "dashboard"
+    sub.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    _git_root.cache_clear()
+
+    assert project_label(repo) == "fckten"
+    assert project_label(sub) == "fckten/dashboard"
+    # auto name collapses to the git label; a custom name still wins
+    assert _session_display_name({"name": "dashboard"}, sub) == "fckten/dashboard"
+    assert _session_display_name({"name": "myapp"}, sub) == "myapp"
+
+
 def test_session_summary_carries_name(tmp_path: Path) -> None:
     project = tmp_path / "dashboard"
     project.mkdir()
