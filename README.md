@@ -56,6 +56,7 @@ yikes claude -i               # run it isolated in Docker (ports from yikes.toml
 yikes sessions                # list durable sessions
 yikes attach <session-id>     # overtake an attachable session
 yikes close <session-id>      # close one session
+yikes close-all               # close every session (asks to confirm; -y to skip)
 ```
 
 `yikes claude` / `yikes codex` start (or reattach) a real interactive session for the current directory and drop you straight in — as easy as running `claude` or `codex`, but durable and reattachable. The session name defaults to the directory, so re-running in the same project resumes it. Each launch first shows a short pre-flight panel with the mapped ports and how to leave (`Ctrl-b d`) and return (`yikes claude`); from there you can add an initial prompt for a new session (`-m "..."` or the panel's `[p]`). Per-project defaults (backend, isolation, published ports, name) live in a committed `yikes.toml`; run `yikes init` to scaffold one, or `yikes setup` to have the backend look at the project (it asks what you're building) and write `yikes.toml` plus a starter `AGENTS.md` for you. See [the CLI docs](docs/cli-wrapper.md#one-word-launchers) for the full reference, including Docker isolation and port publishing.

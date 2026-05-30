@@ -188,17 +188,20 @@ class SessionLifecycle:
             return durable
         return CloseResult(session_id, "unknown", False, f"Session not found: {session_id}")
 
-    def close_all(self, *, runtime: str | None = None, backend: str | None = None) -> list[CloseResult]:
+    def matching(self, *, runtime: str | None = None, backend: str | None = None) -> list[SessionSummary]:
         normalized_runtime = None if runtime in (None, "all") else runtime
         normalized_backend = None if backend in (None, "all") else backend
-        results: list[CloseResult] = []
+        matches: list[SessionSummary] = []
         for summary in SessionInventory(runtime_store=self.runtime_store, sandbox_store=self.sandbox_store).list():
             if normalized_runtime and summary.runtime != normalized_runtime:
                 continue
             if normalized_backend and summary.backend != normalized_backend:
                 continue
-            results.append(self.close(summary.id))
-        return results
+            matches.append(summary)
+        return matches
+
+    def close_all(self, *, runtime: str | None = None, backend: str | None = None) -> list[CloseResult]:
+        return [self.close(summary.id) for summary in self.matching(runtime=runtime, backend=backend)]
 
     def summary(self, session_id: str) -> SessionSummary | None:
         resolved = self.resolve_session_id(session_id) or session_id

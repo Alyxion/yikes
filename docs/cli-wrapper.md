@@ -175,7 +175,7 @@ The current package implements:
 - `yikes chat-smoke`: an end-to-end chatbot smoke flow across backend/runtime combinations.
 - `yikes sessions`: lists known yikes! sessions across durable tmux/remote metadata and Docker sandboxes.
 - `yikes close <id>`: closes one known session. Docker sessions are destroyed; tmux sessions are killed when socket metadata is available; durable metadata is removed.
-- `yikes close-all --runtime docker|tmux|remote-server|all --backend claude|codex|all`: closes matching sessions in bulk.
+- `yikes close-all [--runtime docker|tmux|remote-server|all] [--backend claude|codex|all] [--yes]`: closes matching sessions in bulk. It first lists what will be closed and asks to confirm; pass `-y/--yes` to skip the prompt. Without a TTY it refuses unless `--yes` is given, so scripts can't mass-close by accident.
 - `yikes attach <id> [--print-only]`: overtakes attachable local tmux and Docker+tmux sessions. Docker attach uses `docker exec -it <container> tmux ...`.
 - `yikes tmux start <name> --backend claude|codex [--cwd PATH] [--model NAME] [--replace]`: starts a long-lived, named interactive tmux session. `--replace` kills any existing session with the same name first.
 - `yikes tmux state <name-or-id> [--json] [--output]`: reports the inferred background state (`idle`, `thinking`, `streaming`, `awaiting-selection`, or `unknown`) and optionally the recent terminal output.

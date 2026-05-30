@@ -398,13 +398,28 @@ if typer:
     def close_all(
         runtime: str | None = typer.Option(None, "--runtime", "-r", help="Runtime filter: docker, tmux, remote-server, or all."),
         backend: str | None = typer.Option(None, "--backend", "-b", help="Backend filter: claude, codex, or all."),
+        yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
         runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
         sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
     ) -> None:
-        results = SessionLifecycle(runtime_store=runtime_store, sandbox_store=sandbox_store).close_all(
-            runtime=runtime,
-            backend=backend,
-        )
+        lifecycle = SessionLifecycle(runtime_store=runtime_store, sandbox_store=sandbox_store)
+        summaries = lifecycle.matching(runtime=runtime, backend=backend)
+        if not summaries:
+            typer.echo("No matching sessions to close.")
+            return
+        typer.echo(f"This will close {len(summaries)} session(s):")
+        for summary in summaries:
+            typer.echo(f"  {summary.id}  {summary.runtime}/{summary.backend}  {summary.state}")
+        if not yes:
+            if not sys.stdin.isatty():
+                typer.echo("yikes: refusing to close sessions non-interactively; pass --yes", err=True)
+                raise typer.Exit(1)
+            from . import interactive
+
+            if not interactive.confirm(f"Close {len(summaries)} session(s)?", default=False):
+                typer.echo("aborted")
+                return
+        results = [lifecycle.close(summary.id) for summary in summaries]
         for result in results:
             typer.echo(result.message)
         typer.echo(f"Closed {sum(1 for result in results if result.closed)}/{len(results)} sessions.")

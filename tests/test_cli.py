@@ -359,6 +359,69 @@ def test_setup_uses_sole_backend_without_asking(tmp_path, monkeypatch) -> None:
     assert used["backend"] == Backend.CODEX
 
 
+def _make_direct_session(runtime_store: Path) -> str:
+    meta = DurableSessionManager(runtime_store).create(
+        backend=Backend.CLAUDE,
+        driver=Driver.DIRECT,
+        runtime=RuntimeRef(RuntimeKind.DIRECT),
+        cwd=runtime_store.parent,
+    )
+    return meta.id
+
+
+def _close_all_args(tmp_path: Path) -> list[str]:
+    return [
+        "close-all",
+        "--runtime-store",
+        str(tmp_path / "sessions"),
+        "--sandbox-store",
+        str(tmp_path / "sandboxes"),
+    ]
+
+
+def test_close_all_no_sessions(tmp_path, capsys) -> None:
+    assert cli.main(_close_all_args(tmp_path)) == 0
+    assert "No matching sessions" in capsys.readouterr().out
+
+
+def test_close_all_confirms_then_closes(tmp_path, monkeypatch) -> None:
+    sid = _make_direct_session(tmp_path / "sessions")
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+    monkeypatch.setattr(yikes.interactive, "confirm", lambda *a, **k: True)
+
+    assert cli.main(_close_all_args(tmp_path)) == 0
+    assert DurableSessionManager(tmp_path / "sessions").get(sid) is None
+
+
+def test_close_all_aborts_when_declined(tmp_path, monkeypatch) -> None:
+    sid = _make_direct_session(tmp_path / "sessions")
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=True))
+    monkeypatch.setattr(yikes.interactive, "confirm", lambda *a, **k: False)
+
+    assert cli.main(_close_all_args(tmp_path)) == 0
+    assert DurableSessionManager(tmp_path / "sessions").get(sid) is not None
+
+
+def test_close_all_non_tty_refuses_without_yes(tmp_path, monkeypatch) -> None:
+    sid = _make_direct_session(tmp_path / "sessions")
+    monkeypatch.setattr(cli.sys, "stdin", _fake_stdin(tty=False))
+
+    assert cli.main(_close_all_args(tmp_path)) == 1
+    assert DurableSessionManager(tmp_path / "sessions").get(sid) is not None
+
+
+def test_close_all_yes_skips_prompt(tmp_path, monkeypatch) -> None:
+    sid = _make_direct_session(tmp_path / "sessions")
+
+    def boom(*_a, **_k):
+        raise AssertionError("confirm should be skipped with --yes")
+
+    monkeypatch.setattr(yikes.interactive, "confirm", boom)
+
+    assert cli.main([*_close_all_args(tmp_path), "--yes"]) == 0
+    assert DurableSessionManager(tmp_path / "sessions").get(sid) is None
+
+
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     def fake_run_tui(**_kwargs: object) -> None:
         raise AssertionError("run_tui should not be called")
@@ -601,6 +664,7 @@ def test_close_all_command_filters_runtime(tmp_path, capsys) -> None:
                 "close-all",
                 "--runtime",
                 "tmux",
+                "--yes",
                 "--runtime-store",
                 str(runtime_store),
                 "--sandbox-store",
