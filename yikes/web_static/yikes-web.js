@@ -215,6 +215,7 @@ function handleMessage(message) {
 
 function render(next) {
   state.app = next;
+  maybeAutoAttachInteractive(next);
   renderStatus(next.status, next.active_session_activity);
   renderTabs(next.sessions, next.active_session_id);
   renderViewToggle(next.output_view);
@@ -514,6 +515,25 @@ function resolveLocalCommand(rawCommand) {
   if (commands.includes(rawCommand)) return rawCommand;
   const matches = commands.filter(command => command.startsWith(rawCommand));
   return matches.length === 1 ? matches[0] : rawCommand;
+}
+
+function maybeAutoAttachInteractive(next) {
+  // Interactive (tmux/docker) sessions render nothing in the extracted view by
+  // design — show their live terminal instead. Attach once per session so a
+  // manual /resume sticks, and drop the terminal when the active session is a
+  // non-interactive (direct CLI) one.
+  if (!state.term || state.creatingSession || state.terminalExclusive || next.pending_new) return;
+  const id = next.active_session_id || "";
+  const session = id ? (next.sessions || []).find(s => s.id === id) : null;
+  const interactive = !!session && (session.runtime === "tmux" || session.runtime === "docker");
+  if (!interactive) {
+    if (state.terminalMode) closeTerminalMode();
+    state.autoAttachedSession = "";
+    return;
+  }
+  if (state.autoAttachedSession === id) return;
+  state.autoAttachedSession = id;
+  openTerminalMode({ exclusive: false });
 }
 
 function openTerminalMode({ exclusive }) {
