@@ -452,6 +452,22 @@ def test_web_url_prints_login_url_without_starting(tmp_path, capsys) -> None:
     assert "http://127.0.0.1:8760/login?key=" in out
 
 
+def test_advertise_and_primary_host(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_lan_ipv4_addresses", lambda: ["10.0.0.5"])
+
+    assert cli._advertise_hosts("0.0.0.0") == ["127.0.0.1", "10.0.0.5"]
+    assert cli._advertise_hosts("1.2.3.4") == ["1.2.3.4"]
+    assert cli._primary_url_host("0.0.0.0") == "10.0.0.5"  # LAN over loopback
+    assert cli._primary_url_host("127.0.0.1") == "127.0.0.1"
+
+
+def test_web_url_on_all_interfaces_prints_lan(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "_lan_ipv4_addresses", lambda: ["10.0.0.5"])
+
+    assert cli.main(["web", "--url", "--host", "0.0.0.0", "--cwd", str(tmp_path), "--port", "8760"]) == 0
+    assert "http://10.0.0.5:8760/login?key=" in capsys.readouterr().out
+
+
 def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     def fake_run_tui(**_kwargs: object) -> None:
         raise AssertionError("run_tui should not be called")

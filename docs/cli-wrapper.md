@@ -203,14 +203,19 @@ Flags: `--host` (default `127.0.0.1`, loopback only), `--port` (default `8760`),
 
 **No hot-reload.** The server is a long-running process that serves whatever code was imported at startup. After updating yikes (or landing changes that touch the web server or the modules it imports), restart it: stop the running server (it does not restart a live port itself) and run `yikes web` again. Keep it durable with a detached `tmux new-session -d -s yikes-web-<port> "yikes web …"` so it survives the shell.
 
-**Remote access.** Because it binds loopback by default, reach it from another machine with an SSH local-forward rather than exposing it. From a Windows PC:
+**Advertised URLs.** On startup the server prints a login URL for every host it is actually reachable on. Bound to loopback (the default) it prints the `127.0.0.1` URL plus a hint showing the LAN address and the `--host 0.0.0.0` command to make it reachable. Bound to `--host 0.0.0.0` it prints a working `http://<lan-ip>:<port>/login?key=…` for each real network interface, so you can copy one straight to another machine. `yikes web --url` prints a single best URL — the LAN address when bound to all interfaces, otherwise the bind host. If the port is already in use (e.g. another `yikes web` is running), it reports that cleanly instead of a bind traceback.
 
-```powershell
-ssh -L 8760:localhost:8760 you@mac          # tunnel (separate window)
-Start-Process (ssh you@mac "cd ~/projects/yikes && yikes web --url")
-```
+**Remote access.** Two ways to reach it from another machine:
 
-The SSH channel carries the key (it never leaves the encrypted connection), and through the tunnel the printed `127.0.0.1:8760` URL resolves to the Mac. To reach it without a tunnel, bind `--host 0.0.0.0` (the login key is then the only guard — keep it secret) or front it with a mesh VPN such as Tailscale.
+- *Same network, direct:* start with `--host 0.0.0.0`, then open one of the printed `http://<lan-ip>:<port>/login?key=…` URLs. The login key is then the only guard, so keep it secret (or front it with a mesh VPN such as Tailscale).
+- *Secure tunnel (keeps it loopback-only):* SSH local-forward. From a Windows PC:
+
+  ```powershell
+  ssh -L 8760:localhost:8760 you@mac          # tunnel (separate window)
+  Start-Process (ssh you@mac "cd ~/projects/yikes && yikes web --url")
+  ```
+
+  The SSH channel carries the key (it never leaves the encrypted connection), and through the tunnel the printed `127.0.0.1:8760` URL resolves to the Mac.
 
 The command set below is still the larger target CLI design.
 

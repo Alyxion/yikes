@@ -488,10 +488,19 @@ if typer:
 
         root = (cwd or Path.cwd()).expanduser()
         auth_config = WebAuthConfig.load(developer_mode=dev, env_path=root / ".env", persist_auth=persistent_auth)
-        url = auth_config.login_url(host=host, port=port)
+        advertise = _advertise_hosts(host)
         if url_only:
-            typer.echo(url)
+            # one machine-consumable URL: the most reachable host for this bind
+            typer.echo(auth_config.login_url(host=_primary_url_host(host), port=port))
             return
+
+        if _port_in_use(host, port):
+            typer.echo(
+                f"yikes: port {port} is already in use (another yikes web may be running). "
+                f"Stop it or use --port.",
+                err=True,
+            )
+            raise typer.Exit(1)
 
         import threading
         import time
@@ -503,10 +512,19 @@ if typer:
         from .web import create_app
 
         app_instance = create_app(YikesAppController(cwd=root), auth=auth_config)
+        local_url = auth_config.login_url(host=advertise[0], port=port)
         if open_browser:
-            threading.Thread(target=lambda: (time.sleep(0.8), webbrowser.open(url)), daemon=True).start()
-        typer.echo(f"yikes! web UI listening on http://{host}:{port}/")
-        typer.echo(f"login URL: {url}")
+            threading.Thread(target=lambda: (time.sleep(0.8), webbrowser.open(local_url)), daemon=True).start()
+        typer.echo(f"yikes! web UI listening on {host}:{port} — open a login URL below:")
+        for advertised in advertise:
+            typer.echo(f"  {auth_config.login_url(host=advertised, port=port)}")
+        if host in {"127.0.0.1", "localhost"}:
+            lan = _lan_ipv4_addresses()
+            hint = lan[0] if lan else "<lan-ip>"
+            typer.echo(
+                f"  (loopback only — for another machine: restart with --host 0.0.0.0 "
+                f"to serve http://{hint}:{port}/, or use an SSH tunnel)"
+            )
         uvicorn.run(app_instance, host=host, port=port, log_level="info")
 
 
@@ -709,6 +727,53 @@ def _session_exists(backend: Backend, project_dir: Path, name: str, *, isolated:
 
     ref = _docker_session_id(backend, project_dir) if isolated else name
     return SessionLifecycle().resolve_session_id(ref) is not None
+
+
+def _lan_ipv4_addresses() -> list[str]:
+    """Best-effort list of this host's reachable LAN IPv4 addresses (no deps)."""
+    import socket
+
+    found: set[str] = set()
+    try:  # the default-route outbound address (no packets are actually sent)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            found.add(probe.getsockname()[0])
+    except OSError:
+        pass
+    try:  # any other addresses bound to this hostname
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            found.add(info[4][0])
+    except OSError:
+        pass
+    return sorted(ip for ip in found if not ip.startswith(("127.", "169.254.")))
+
+
+def _advertise_hosts(host: str) -> list[str]:
+    """Hosts the server is actually reachable on, for printing login URLs."""
+    if host in {"0.0.0.0", "::", ""}:
+        return ["127.0.0.1", *_lan_ipv4_addresses()]
+    return [host]
+
+
+def _primary_url_host(host: str) -> str:
+    """The single most useful host for a machine-consumable URL.
+
+    When bound to all interfaces, prefer a LAN address (reachable from other
+    machines) over loopback; otherwise the bind host itself.
+    """
+    if host in {"0.0.0.0", "::", ""}:
+        lan = _lan_ipv4_addresses()
+        return lan[0] if lan else "127.0.0.1"
+    return host
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    import socket
+
+    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::", ""} else host
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.2)
+        return probe.connect_ex((probe_host, port)) == 0
 
 
 def _config_backend(config: object) -> Backend | None:
