@@ -514,12 +514,24 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else sys.argv[1:]
     if not argv:
         argv = ["menu"]
+    # `yikes help [cmd]` is a friendly alias for `--help` / `cmd --help`.
+    if argv and argv[0] == "help":
+        rest = argv[1:]
+        argv = [*rest, "--help"] if rest else ["--help"]
     if typer:
+        import click
+
         try:
             result = app(args=argv, standalone_mode=False)
             return result if isinstance(result, int) else 0
         except typer.Exit as exc:
             return int(exc.exit_code)
+        except click.Abort:
+            print("Aborted.", file=sys.stderr)
+            return 130
+        except click.ClickException as exc:
+            exc.show()  # clean "Usage: … Error: …" message, no traceback
+            return exc.exit_code
         except YikesError as exc:
             print(f"yikes: {exc}", file=sys.stderr)
             return 1

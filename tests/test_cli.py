@@ -435,6 +435,17 @@ def test_relaunch_tui_argv_returns_to_dashboard(monkeypatch) -> None:
     assert tui._relaunch_tui_argv()[2:] == ["tui", "--backend", "codex"]
 
 
+def test_help_alias_shows_help() -> None:
+    assert cli.main(["help"]) == 0
+    assert cli.main(["help", "web"]) == 0
+
+
+def test_unknown_command_errors_cleanly(capsys) -> None:
+    code = cli.main(["bogus"])
+    assert code == 2  # click UsageError exit code, not a traceback
+    assert "No such command" in capsys.readouterr().err
+
+
 def test_web_url_prints_login_url_without_starting(tmp_path, capsys) -> None:
     assert cli.main(["web", "--url", "--cwd", str(tmp_path), "--host", "127.0.0.1", "--port", "8760"]) == 0
     out = capsys.readouterr().out
