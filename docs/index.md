@@ -143,7 +143,7 @@ The terminal UI has two output views:
 - `/view extracted` keeps the normal clean assistant answer view.
 - `/view full` shows the captured tmux screen where yikes! can resolve the backing session, including the prompt, backend UI text, and result markers.
 
-Managed answer capture is enabled by default for tmux chat turns, but it is a session setting rather than a requirement. Use `/capture off`, `yikes tui --no-capture`, or the new-session chooser's Capture field to create a raw interactive session where yikes! pastes only the user's input and leaves the native terminal UI unwrapped.
+Managed answer capture is off by default for tmux chat turns because tmux is primarily the raw interactive path. Use `/capture on`, `yikes tui --capture`, or the new-session chooser's Capture field when a session should wrap turns for extracted high-level answers.
 
 For interactive prompts, yikes! exposes both small controls and full overtake:
 
@@ -151,6 +151,8 @@ For interactive prompts, yikes! exposes both small controls and full overtake:
 - `/paste <text>` pastes text into the selected tmux session.
 - `/term` opens an interactive terminal attach in the current yikes! surface.
 - `/fullscreen` gives that attach the whole screen, so every key goes directly to Claude/Codex except yikes!' reserved return key. Press `Ctrl-b` or the visible return control to resume the yikes! UI. Double-Escape is intentionally avoided because Escape is part of many terminal key sequences, including cursor keys and modal UI behavior.
+
+Host MCP stdio-to-SSE proxies are only started for enabled MCP servers that need proxying, such as Docker sessions that must reach a host MCP through `host.docker.internal`. The SSE URL and message endpoint include an unguessable per-process token, and the proxy rejects requests without that token.
 
 ---
 

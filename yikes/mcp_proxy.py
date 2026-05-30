@@ -4,9 +4,11 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import threading
 import uuid
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .mcp import McpServerConfig, filter_tools_list, is_tool_allowed
 
@@ -17,10 +19,12 @@ logger = logging.getLogger(__name__)
 class McpSseProxy:
     """Bridge one stdio MCP server to MCP SSE transport."""
 
-    def __init__(self, name: str, config: McpServerConfig, port: int = 0) -> None:
+    def __init__(self, name: str, config: McpServerConfig, port: int = 0, host: str = "127.0.0.1") -> None:
         self.name = name
         self.config = config
         self.port = port
+        self.host = host
+        self.token = secrets.token_urlsafe(32)
         self._actual_port = 0
         self._process: asyncio.subprocess.Process | None = None
         self._server: asyncio.Server | None = None
@@ -30,11 +34,14 @@ class McpSseProxy:
 
     @property
     def url(self) -> str:
-        return f"http://localhost:{self._actual_port}/sse"
+        return self._url("localhost")
 
     @property
     def host_url(self) -> str:
-        return f"http://host.docker.internal:{self._actual_port}/sse"
+        return self._url("host.docker.internal")
+
+    def _url(self, host: str) -> str:
+        return f"http://{host}:{self._actual_port}/sse?{urlencode({'token': self.token})}"
 
     async def start(self) -> None:
         env = {**os.environ, **self.config.env}
@@ -47,7 +54,7 @@ class McpSseProxy:
             env=env,
         )
         self._stdout_task = asyncio.create_task(self._read_mcp_stdout())
-        self._server = await asyncio.start_server(self._handle_connection, "0.0.0.0", self.port)
+        self._server = await asyncio.start_server(self._handle_connection, self.host, self.port)
         socket = self._server.sockets[0]
         self._actual_port = int(socket.getsockname()[1])
 
@@ -168,6 +175,11 @@ class McpSseProxy:
                 if ": " in decoded:
                     key, value = decoded.split(": ", 1)
                     headers[key.lower()] = value
+            if not self._is_authorized(path, headers):
+                writer.write(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
+                await writer.drain()
+                writer.close()
+                return
             host = headers.get("host", f"localhost:{self._actual_port}")
             if method == "GET" and "/sse" in path:
                 await self._handle_sse(writer, host)
@@ -186,17 +198,23 @@ class McpSseProxy:
             logger.exception("MCP HTTP handler failed for %s", self.name)
             writer.close()
 
+    def _is_authorized(self, path: str, headers: dict[str, str]) -> bool:
+        auth = headers.get("authorization", "")
+        if auth == f"Bearer {self.token}":
+            return True
+        query = parse_qs(urlsplit(path).query)
+        return self.token in query.get("token", [])
+
     async def _handle_sse(self, writer: asyncio.StreamWriter, host: str) -> None:
         session_id = str(uuid.uuid4())
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._sse_queues[session_id] = queue
-        endpoint = f"http://{host}/message?sessionId={session_id}"
+        endpoint = f"http://{host}/message?{urlencode({'sessionId': session_id, 'token': self.token})}"
         writer.write(
             b"HTTP/1.1 200 OK\r\n"
             b"Content-Type: text/event-stream\r\n"
             b"Cache-Control: no-cache\r\n"
-            b"Connection: keep-alive\r\n"
-            b"Access-Control-Allow-Origin: *\r\n\r\n"
+            b"Connection: keep-alive\r\n\r\n"
         )
         writer.write(f"event: endpoint\ndata: {endpoint}\n\n".encode("utf-8"))
         await writer.drain()
@@ -251,10 +269,11 @@ class ProxyManager:
             return {}
         self._loop = asyncio.new_event_loop()
         urls: dict[str, str] = {}
+        bind_host = "0.0.0.0" if container_mode else "127.0.0.1"
 
         async def setup() -> None:
             for name, config in servers.items():
-                proxy = McpSseProxy(name, config)
+                proxy = McpSseProxy(name, config, host=bind_host)
                 await proxy.start()
                 self._proxies.append(proxy)
                 urls[name] = proxy.host_url if container_mode else proxy.url
@@ -283,9 +302,5 @@ class ProxyManager:
 
 
 def _session_id(path: str) -> str:
-    if "?" not in path:
-        return ""
-    for param in path.split("?", 1)[1].split("&"):
-        if param.startswith("sessionId="):
-            return param.split("=", 1)[1]
-    return ""
+    values = parse_qs(urlsplit(path).query).get("sessionId")
+    return values[0] if values else ""

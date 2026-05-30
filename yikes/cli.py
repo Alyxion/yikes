@@ -462,10 +462,11 @@ def _settings_from_cli(
     write_dir: list[Path] | None,
     mcp: list[str] | None,
 ) -> AgentSettings:
+    managed_output = False if tmux is True and capture is None else (True if capture is None else capture)
     return AgentSettings(
         web_search_enabled=True if web_search is None else web_search,
         tmux_enabled=False if tmux is None else tmux,
-        managed_output_enabled=True if capture is None else capture,
+        managed_output_enabled=managed_output,
         read_roots=tuple(path.expanduser() for path in (read_dir or ())),
         write_roots=tuple(path.expanduser() for path in (write_dir or ())),
         mcp_servers=tuple(_parse_mcp_spec(spec) for spec in (mcp or ())),

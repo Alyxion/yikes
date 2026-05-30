@@ -78,6 +78,16 @@ def test_tool_filtering_and_proxy_request_checks() -> None:
     assert proxy._check_request({"id": 3, "method": "tools/call", "params": {"name": "read"}}) is None
 
 
+def test_mcp_sse_proxy_urls_are_token_gated() -> None:
+    proxy = McpSseProxy("fs", McpServerConfig("python"))
+
+    assert "token=" in proxy.url
+    assert "token=" in proxy.host_url
+    assert proxy._is_authorized(f"/sse?token={proxy.token}", {}) is True
+    assert proxy._is_authorized("/sse", {"authorization": f"Bearer {proxy.token}"}) is True
+    assert proxy._is_authorized("/sse", {}) is False
+
+
 def test_credential_broker_resolves_explicit_grants(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "env-secret")
     broker = CredentialBroker(

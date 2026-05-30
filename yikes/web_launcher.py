@@ -48,7 +48,7 @@ def launch_web_ui(
                 "--cwd",
                 str(root),
                 "--dev" if developer_mode else "--no-dev",
-                "--persistent-auth" if persistent_auth else "--ephemeral-auth",
+                "--persistent-auth" if persistent_auth else "--no-persistent-auth",
             ],
             cwd=str(root),
             env=env,

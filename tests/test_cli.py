@@ -52,6 +52,21 @@ def test_tui_rejects_remote_control_chat_mode(monkeypatch) -> None:
     assert cli.main(["tui", "--driver", "remote-control"]) == 1
 
 
+def test_tui_tmux_defaults_to_raw_capture_off(monkeypatch) -> None:
+    called: dict[str, object] = {}
+
+    def fake_run_tui(**kwargs: object) -> None:
+        called.update(kwargs)
+
+    monkeypatch.setattr(yikes.tui, "run_tui", fake_run_tui)
+
+    assert cli.main(["tui", "--tmux"]) == 0
+    settings = called["settings"]
+    assert isinstance(settings, AgentSettings)
+    assert settings.tmux_enabled is True
+    assert settings.managed_output_enabled is False
+
+
 def test_token_command_creates_hashed_token(tmp_path, capsys) -> None:
     store = tmp_path / "tokens.json"
 
