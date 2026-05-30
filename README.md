@@ -83,13 +83,7 @@ To attach images in the terminal app, use `Ctrl+V` for smart paste: yikes! impor
 
 For local debugging, tmux I/O tracing is opt-in. Set `YIKES_DEVELOPER_MODE=1` or `YIKES_TMUX_IO_LOG=1` before starting yikes! to write bounded JSONL traces under `~/.yikes/debug/tmux-io`. The trace records text pasted into tmux, keys sent to tmux, resize events, and captured terminal output. Files are capped and self-cleaning; use `YIKES_TMUX_IO_LOG_DIR`, `YIKES_TMUX_IO_LOG_FILE_BYTES`, `YIKES_TMUX_IO_LOG_TOTAL_BYTES`, and `YIKES_TMUX_IO_LOG_MAX_FILES` to tune retention.
 
-The local web UI keeps its login key stable across server restarts by default by storing it in the project `.env` file. Use `yikes web --ephemeral-auth` only when you explicitly want a fresh browser login key for that run. The server is a long-running process and does not hot-reload, so after updating yikes restart it (stop the running server, then `yikes web` again) to pick up new code.
-
-`yikes web --url` prints the full login URL (with the key embedded) and exits without starting the server — handy for opening the UI from another machine over SSH without copying the key by hand. From a Windows PC, after `ssh -L 8760:localhost:8760 you@mac`:
-
-```powershell
-Start-Process (ssh you@mac "cd ~/projects/yikes && yikes web --url")
-```
+`yikes web` serves a login-key-gated web UI (key stored in the project `.env`); `yikes web --url` prints the login URL so you can open it from another machine without copying the key. The server does not hot-reload, so restart it after updating yikes. See [the Web UI docs](docs/cli-wrapper.md#web-ui-yikes-web) for flags, remote access over SSH, and the restart workflow.
 
 MCP SSE proxies are started only for enabled MCP servers that need proxying, such as a host stdio MCP attached to a Docker session. Each proxy uses an unguessable per-process token in its SSE and message URLs. Docker sessions may copy local Codex or Claude credentials into their managed workspace so the native CLI can run inside the container; close sessions and remove their Docker volumes when those credentials should disappear.
 

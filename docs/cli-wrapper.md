@@ -187,6 +187,31 @@ The current package implements:
 - Persisted app state in `~/.config/yikes/state.json` covering backend, effective runtime, model, complexity, web search, read/write directories, and MCP servers.
 - The Textual UI exposes backend, location, driver, model, complexity, web-search, session inventory, switch, attach, close, close Docker, close tmux, and close all controls in the left panel.
 
+### Web UI (`yikes web`)
+
+`yikes web` serves the browser control UI (FastAPI + uvicorn) backed by the same controller as the terminal app.
+
+```bash
+yikes web                       # serve on http://127.0.0.1:8760 and open a browser
+yikes web --host 0.0.0.0 --port 9000 --no-open
+yikes web --url                 # print the login URL (with key) and exit; don't start
+```
+
+Flags: `--host` (default `127.0.0.1`, loopback only), `--port` (default `8760`), `--cwd` (default start dir for new sessions), `--dev/--no-dev`, `--open/--no-open`, `--persistent-auth/--ephemeral-auth`, and `--url`.
+
+**Authentication.** The UI is gated by a login key. By default it is persisted in the project `.env` as `YIKES_WEB_LOGIN_KEY` and reused across restarts; `/login` accepts the key on a form or as `?key=…`, then sets a session cookie. `--ephemeral-auth` mints a throwaway key for that run instead of persisting one. `yikes web --url` reads the persisted key and prints the full `…/login?key=…` URL without starting the server — useful for logging in from another machine without copying the key by hand.
+
+**No hot-reload.** The server is a long-running process that serves whatever code was imported at startup. After updating yikes (or landing changes that touch the web server or the modules it imports), restart it: stop the running server (it does not restart a live port itself) and run `yikes web` again. Keep it durable with a detached `tmux new-session -d -s yikes-web-<port> "yikes web …"` so it survives the shell.
+
+**Remote access.** Because it binds loopback by default, reach it from another machine with an SSH local-forward rather than exposing it. From a Windows PC:
+
+```powershell
+ssh -L 8760:localhost:8760 you@mac          # tunnel (separate window)
+Start-Process (ssh you@mac "cd ~/projects/yikes && yikes web --url")
+```
+
+The SSH channel carries the key (it never leaves the encrypted connection), and through the tunnel the printed `127.0.0.1:8760` URL resolves to the Mac. To reach it without a tunnel, bind `--host 0.0.0.0` (the login key is then the only guard — keep it secret) or front it with a mesh VPN such as Tailscale.
+
 The command set below is still the larger target CLI design.
 
 ### `yikes ask` — one-shot, headless
