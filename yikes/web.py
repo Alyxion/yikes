@@ -101,7 +101,12 @@ def create_app(
 
     @app.get("/")
     async def index() -> HTMLResponse:
-        return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        # Cache-bust local assets so edited JS/CSS load on a normal refresh.
+        version = str(int(_static_stamp()))
+        html = html.replace("/static/yikes-web.js", f"/static/yikes-web.js?v={version}")
+        html = html.replace("/static/yikes-web.css", f"/static/yikes-web.css?v={version}")
+        return HTMLResponse(html)
 
     @app.get("/api/state")
     async def state() -> dict[str, Any]:

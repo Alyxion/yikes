@@ -73,7 +73,12 @@ function connectDevReload() {
 }
 
 setInterval(() => {
-  if (state.app?.has_active_session && !state.terminalMode) send("state");
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  // Refresh even with no active session and while attached in split terminal
+  // mode, so sessions started elsewhere appear in the tabs. render() leaves the
+  // live terminal untouched in terminal mode; only fullscreen suppresses polling.
+  if (state.terminalExclusive) return;
+  send("state");
 }, 650);
 
 function send(type, payload = {}) {

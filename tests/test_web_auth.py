@@ -109,6 +109,18 @@ def test_web_auth_key_is_global_not_per_directory(tmp_path: Path, monkeypatch) -
     assert not (dir_a / ".env").exists()  # never written to the project dir
 
 
+def test_index_cache_busts_assets(tmp_path: Path) -> None:
+    auth = WebAuthConfig(secret="test-secret", login_key="k", developer_mode=True)
+    app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)
+
+    with TestClient(app) as client:
+        login = client.get("/login?key=k", follow_redirects=False)
+        client.cookies.set(auth.cookie_name, login.cookies[auth.cookie_name])
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "yikes-web.js?v=" in page.text
+
+
 def test_web_login_throttles_brute_force(tmp_path: Path) -> None:
     auth = WebAuthConfig(secret="test-secret", login_key="right-key", developer_mode=True)
     app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)
