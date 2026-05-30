@@ -16,7 +16,7 @@ from .drivers import ensure_interactive_session
 from .output import OutputContext, SessionOutputService
 from .prompt_profile import DEFAULT_PROMPT_PROFILE_PATH, load_prompt_profile
 from .services import BackendTransport, ChatTransport, Conversation
-from .session_inventory import SessionInventory, SessionLifecycle, SessionSummary, record_direct_session
+from .session_inventory import SessionInventory, SessionLifecycle, SessionSummary, project_label, record_direct_session
 from .state import AppState, load_app_state, save_app_state
 
 
@@ -123,6 +123,7 @@ class YikesAppController:
                     state="created",
                     location=str(options.cwd),
                     detail="pending first turn",
+                    name=project_label(options.cwd),
                 ),
             )
         return sessions
@@ -560,6 +561,7 @@ class YikesAppController:
     def _summary_json(session: SessionSummary, *, activity: TerminalActivity | None = None) -> dict[str, Any]:
         data: dict[str, Any] = {
             "id": session.id,
+            "name": session.name or session.id[-6:],
             "runtime": session.runtime,
             "backend": session.backend,
             "state": session.state,

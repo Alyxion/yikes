@@ -385,7 +385,10 @@ function renderTabs(sessions, activeId) {
     const tab = document.createElement("button");
     tab.className = `tab ${session.id === activeId ? "active" : ""}`;
     const activity = session.activity ? ` · ${session.activity.label}` : "";
-    tab.innerHTML = `<span class="tab-content"><span class="tab-title">${escapeHtml(session.id)}</span><span class="tab-meta">${escapeHtml(session.runtime)}/${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(activity)}</span></span><span class="tab-close" title="Close session">×</span>`;
+    const title = session.name || session.id;
+    const dockerHint = session.runtime === "docker" ? " · docker" : "";
+    tab.title = `${title} · ${session.backend}${dockerHint} (${session.id})`;
+    tab.innerHTML = `<span class="tab-content"><span class="tab-title">${escapeHtml(title)}${escapeHtml(dockerHint ? " · docker" : "")}</span><span class="tab-meta">${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(activity)}</span></span><span class="tab-close" title="Close session">×</span>`;
     tab.onclick = () => {
       if (session.id !== activeId) send("session.switch", { session_id: session.id });
     };

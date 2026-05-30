@@ -337,6 +337,21 @@ def test_controller_output_prefers_live_tmux_snapshot(tmp_path: Path, monkeypatc
     assert controller.output_text() == "shared tmux pane"
 
 
+def test_web_state_sessions_carry_intuitive_name(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "dashboard"
+    project.mkdir()
+    DurableSessionManager().create(
+        backend=Backend.CLAUDE,
+        driver=Driver.DIRECT,
+        runtime=RuntimeRef(RuntimeKind.DIRECT),
+        cwd=project,
+    )
+    controller = YikesAppController(cwd=tmp_path, transport=EchoTransport())
+
+    names = [session["name"] for session in controller.state()["sessions"]]
+    assert "dashboard" in names  # not a raw session id
+
+
 def test_controller_high_view_hides_unmanaged_tmux_snapshot(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("YIKES_STATE_PATH", str(tmp_path / "state.json"))
     monkeypatch.setenv("YIKES_RUNTIME_STORE", str(tmp_path / "sessions"))
