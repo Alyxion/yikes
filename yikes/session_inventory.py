@@ -26,6 +26,7 @@ class SessionSummary:
     state: str
     location: str
     detail: str = ""
+    name: str = ""
 
 
 class SessionInventory:
@@ -53,7 +54,8 @@ class SessionInventory:
         lines = ["Sessions:"]
         for row in rows:
             detail = f" - {row.detail}" if row.detail else ""
-            lines.append(f"{row.id}: {row.runtime}/{row.backend} {row.state} @ {row.location}{detail}")
+            name = f"{row.name} " if row.name else ""
+            lines.append(f"{name}[{row.id}]: {row.runtime}/{row.backend} {row.state} @ {row.location}{detail}")
         return "\n".join(lines)
 
     def _durable_sessions(self) -> list[SessionSummary]:
@@ -87,6 +89,7 @@ class SessionInventory:
                     state=state,
                     location=str(meta.cwd),
                     detail=_runtime_detail(meta.runtime),
+                    name=_session_display_name(meta.user_data, meta.cwd),
                 )
             )
         return rows
@@ -109,6 +112,7 @@ class SessionInventory:
             ) is False:
                 state = "dead"
             session_id = session.meta.user_data.get("logical_session_id") or session.id
+            cwd = session.meta.user_data.get("cwd")
             rows.append(
                 SessionSummary(
                     id=session_id,
@@ -117,9 +121,22 @@ class SessionInventory:
                     state=state,
                     location=session.container_name,
                     detail=f"{session.id} image={session.meta.config.image}",
+                    name=_session_display_name(session.meta.user_data, Path(cwd) if cwd else None),
                 )
             )
         return rows
+
+
+def _session_display_name(user_data: dict[str, str], cwd: "Path | None") -> str:
+    """A human-friendly session name: the custom name, else the project dir."""
+    name = (user_data.get("name") or "").strip()
+    if name:
+        return name
+    if cwd is not None and str(cwd):
+        base = Path(str(cwd)).name
+        if base:
+            return base
+    return ""
 
 
 def _runtime_detail(runtime: object) -> str:

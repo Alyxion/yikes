@@ -469,8 +469,12 @@ def run_tui(
                     live = {session.id for session in visible_sessions}
                     selected = active if active in live else visible_sessions[0].id
                     self.active_session_id = selected
+                    labels = {session.id: self._session_tab_label(session) for session in visible_sessions}
+                    duplicates = {label for label in labels.values() if list(labels.values()).count(label) > 1}
                     for session in visible_sessions:
-                        label = f"{session.backend}/{session.runtime}/{session.id[-6:]}"
+                        label = labels[session.id]
+                        if label in duplicates:
+                            label = f"{label} {session.id[-4:]}"
                         await tabs.add_tab(Tab(label, id=f"session-{session.id}"))
                     tabs.active = f"session-{selected}"
                 elif self.has_active_session:
@@ -482,6 +486,14 @@ def run_tui(
             finally:
                 self.updating_session_tabs = False
             return visible_sessions
+
+        @staticmethod
+        def _session_tab_label(session: object) -> str:
+            """Intuitive tab label: project/custom name + backend, plus a docker hint."""
+            name = getattr(session, "name", "") or getattr(session, "id", "")[-6:]
+            backend = getattr(session, "backend", "")
+            suffix = " · docker" if getattr(session, "runtime", "") == "docker" else ""
+            return f"{name} · {backend}{suffix}"
 
         def _refresh_sessions_soon(self) -> None:
             self.run_worker(self._refresh_sessions(), exclusive=False)

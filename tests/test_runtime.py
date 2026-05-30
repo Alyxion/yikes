@@ -135,6 +135,27 @@ def test_sandbox_run_command_mounts_configured_host_paths(tmp_path: Path) -> Non
     assert f"{tmp_path}:/workspace/project:rw" in cmd
 
 
+def test_session_display_name_prefers_custom_then_dir() -> None:
+    from yikes.session_inventory import _session_display_name
+
+    assert _session_display_name({"name": "shop"}, Path("/srv/whatever")) == "shop"
+    assert _session_display_name({}, Path("/Users/me/projects/dashboard")) == "dashboard"
+    assert _session_display_name({}, None) == ""
+
+
+def test_session_summary_carries_name(tmp_path: Path) -> None:
+    project = tmp_path / "dashboard"
+    project.mkdir()
+    DurableSessionManager(tmp_path / "sessions").create(
+        backend=Backend.CLAUDE,
+        driver=Driver.TMUX,
+        runtime=RuntimeRef(RuntimeKind.TMUX, tmux_socket=str(tmp_path / "s.sock"), tmux_session="s1"),
+        cwd=project,
+    )
+    rows = SessionInventory(runtime_store=tmp_path / "sessions", sandbox_store=tmp_path / "sb").list()
+    assert rows and rows[0].name == "dashboard"
+
+
 def test_sandbox_run_command_publishes_ports(tmp_path: Path) -> None:
     session = SandboxManager(tmp_path).create(
         SandboxConfig(image="example:latest", ports=(("8080", "8080"), ("49200", "5173"))),
