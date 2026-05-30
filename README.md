@@ -37,6 +37,8 @@ python -m pip install -e .
 yikes
 ```
 
+Using the Poetry venv instead? Run `bash scripts/install-path.sh` once to put `yikes` on PATH for new bash and zsh shells. The idempotent helper symlinks the venv entrypoint into `~/.local/bin` and adds a guarded PATH line to your shell rc files.
+
 yikes! expects the backend CLIs you want to use to be installed and logged in for your user:
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)

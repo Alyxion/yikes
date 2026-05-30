@@ -7,6 +7,16 @@ The CLI is a thin shell over the Python library. It must hit two notes:
 
 Native `claude` / `codex` flags are still accepted (we proxy them through), but you rarely need to set them.
 
+## Installing on PATH
+
+The `yikes` console script is declared as a project entry point (`[project.scripts]` in `pyproject.toml`), so a Poetry install builds it at `.venv/bin/yikes`. To make it callable from new bash and zsh shells without activating the venv, run the helper once:
+
+```bash
+bash scripts/install-path.sh
+```
+
+The script is idempotent: it symlinks the venv entrypoint into `~/.local/bin` and appends a single guarded block to `~/.zshrc` and `~/.bashrc` that keeps `~/.local/bin` on PATH. Re-running it refreshes the symlink (for example after recreating the venv) and leaves exactly one guard block per file. A plain `pip install -e .` instead exposes `yikes` on the active interpreter's PATH directly, in which case the helper is not needed.
+
 ## Top-level shape
 
 ```

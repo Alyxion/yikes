@@ -1,5 +1,22 @@
 # Claude Project Instructions
 
+## Docs And README Sync
+
+Documentation must never drift from the code.
+
+Required:
+
+- Whenever you change user-facing behavior, flags, commands, defaults, or
+  helper scripts, update the docs under `docs/` and `README.md` in the same
+  change. Code and docs land together; do not leave a follow-up.
+- `docs/` holds the full detail. Each public surface (CLI flags, Python API,
+  runtime model, install steps) must be documented there.
+- `README.md` stays compact. It is the entry point, not the manual: short
+  feature list, quick start, common commands, and pointers into `docs/`. Add
+  only the few lines a newcomer needs and link to `docs/` for depth rather than
+  expanding the README.
+- When in doubt, put detail in `docs/` and a one-line summary in `README.md`.
+
 ## Runtime Model
 
 yikes! separates **where** a backend runs from **how** it is driven:
