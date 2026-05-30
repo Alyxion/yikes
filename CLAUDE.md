@@ -17,6 +17,25 @@ Required:
   expanding the README.
 - When in doubt, put detail in `docs/` and a one-line summary in `README.md`.
 
+## Restart Long-Running Services After Major Changes
+
+The web UI (`yikes web` → `python -m yikes.web_server`) is a persistent process
+with no hot-reload: it serves whatever code was imported when it started, so it
+keeps running stale code until restarted.
+
+Required:
+
+- After landing a major change (anything touching the web server, services,
+  drivers, session model, or shared modules it imports), restart any running
+  yikes web server so it serves current code. Do not leave a stale server up.
+- `yikes web` will NOT restart a live port — it only starts when the port is
+  free. To restart: kill the `yikes-web-<port>` tmux session (or the detached
+  `python -m yikes.web_server` for that port), confirm the port is free, then
+  relaunch on the same host/port. Keep it durable (a detached
+  `tmux new-session -d -s yikes-web-<port> ...`) so it survives the shell.
+- Only restart servers that are actually running; never start one that the user
+  did not already have up.
+
 ## Runtime Model
 
 yikes! separates **where** a backend runs from **how** it is driven:
