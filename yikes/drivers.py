@@ -1005,6 +1005,10 @@ def _set_tmux_options(socket_path: Path, cwd: Path) -> None:
         ["set", "-g", "remain-on-exit", "on"],
         ["set", "-g", "history-limit", "100000"],
         ["set", "-g", "extended-keys", "off"],
+        # Track the smallest attached client so a native terminal + the web UI's
+        # attach both see the whole pane (no over-wide rows / hidden bottom rows).
+        ["set", "-g", "window-size", "smallest"],
+        ["setw", "-g", "aggressive-resize", "on"],
     ):
         subprocess.run(["tmux", "-S", str(socket_path), *args], cwd=str(cwd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
@@ -1410,6 +1414,19 @@ def _ensure_docker_tmux_session(
         sandbox.meta.user_data["tmux_socket"] = str(socket_path)
         sandbox.meta.user_data["tmux_session"] = session_name
         sandbox._save()
+        for option in (
+            ["set", "-g", "status", "off"],
+            ["set", "-g", "extended-keys", "off"],
+            ["set", "-g", "window-size", "smallest"],
+            ["setw", "-g", "aggressive-resize", "on"],
+        ):
+            sandbox.exec(
+                ["tmux", "-S", str(socket_path), *option],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
     if backend == "claude" and sandbox.meta.user_data.get("cwd_explicit") == "false":
         _confirm_container_workspace_trust_if_needed(sandbox, socket_path, session_name)
     if backend == "codex":

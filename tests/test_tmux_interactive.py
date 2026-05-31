@@ -236,6 +236,8 @@ def test_tmux_options_keep_exited_panes_inspectable(monkeypatch, tmp_path: Path)
     drivers._set_tmux_options(tmp_path / "sock", tmp_path)
 
     assert ["tmux", "-S", str(tmp_path / "sock"), "set", "-g", "remain-on-exit", "on"] in calls
+    # size to the smallest client so a native terminal + the web attach both fit
+    assert ["tmux", "-S", str(tmp_path / "sock"), "set", "-g", "window-size", "smallest"] in calls
 
 
 def test_claude_tmux_submit_keeps_single_carriage_return(monkeypatch, tmp_path: Path) -> None:

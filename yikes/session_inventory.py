@@ -1042,6 +1042,11 @@ def _set_tmux_options(socket_path: Path, cwd: Path) -> None:
         ["set", "-g", "status", "off"],
         ["set", "-g", "history-limit", "100000"],
         ["set", "-g", "extended-keys", "off"],
+        # Size the window to the SMALLEST attached client so every client (e.g. a
+        # native terminal + the web UI's attach) sees the whole pane — otherwise
+        # the larger client's size hides the bottom rows on the smaller one.
+        ["set", "-g", "window-size", "smallest"],
+        ["setw", "-g", "aggressive-resize", "on"],
     ):
         subprocess.run(
             ["tmux", "-S", str(socket_path), *args],
