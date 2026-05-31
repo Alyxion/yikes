@@ -363,6 +363,24 @@ class YikesAppController:
             self.lines = []
         return self.state()
 
+    def add_pane(self, session_id: str, value: str, *, title: str | None = None) -> dict[str, Any]:
+        session = next((s for s in self.sessions() if s.id == session_id), None)
+        value = (value or "").strip()
+        if session is None or not value:
+            return self.state()
+        pane: dict[str, Any] = {"kind": "web"}
+        if value.isdigit():
+            pane["port"] = int(value)
+            pane["title"] = title or f"Port {value}"
+        else:
+            url = value if "://" in value else f"http://{value}"
+            pane["url"] = url
+            pane["title"] = title or url.split("://", 1)[-1]
+        from .project_config import append_local_pane
+
+        append_local_pane(Path(session.location), pane)
+        return self.state()
+
     def start_pane_process(self, session_id: str, pane_id: str) -> dict[str, Any]:
         spec = self._pane_process_spec(session_id, pane_id)
         if self.process_manager is not None and spec and spec.get("start"):

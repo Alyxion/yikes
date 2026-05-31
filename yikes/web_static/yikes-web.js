@@ -611,7 +611,7 @@ function renderPaneBar(session, panes, activeId) {
   const key = `${session.id}:${panes.map(p => `${p.id}/${p.title}/${paneStatus(session, p)}`).join("|")}:${activeId}`;
   if (key === state.renderedPaneBarKey) return;
   state.renderedPaneBarKey = key;
-  els.paneBar.replaceChildren(...panes.map(p => {
+  const tabs = panes.map(p => {
     const tab = document.createElement("button");
     tab.className = `pane-tab ${p.id === activeId ? "active" : ""}`;
     const status = paneStatus(session, p);
@@ -619,7 +619,34 @@ function renderPaneBar(session, panes, activeId) {
     tab.innerHTML = `${dot}${escapeHtml(p.title)}`;
     tab.onclick = () => selectPane(session.id, p.id);
     return tab;
-  }));
+  });
+  const add = document.createElement("button");
+  add.className = "pane-tab pane-add";
+  add.textContent = "＋ web";
+  add.title = "Add a web view (enter a port or full URL)";
+  add.onclick = () => showAddPaneInput(session.id);
+  els.paneBar.replaceChildren(...tabs, add);
+}
+
+function showAddPaneInput(sessionId) {
+  if (els.paneBar.querySelector(".pane-add-input")) return;
+  const input = document.createElement("input");
+  input.className = "pane-add-input";
+  input.placeholder = "port or URL · Enter to add";
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      const value = input.value.trim();
+      input.remove();
+      if (value) {
+        state.renderedPaneBarKey = "";
+        send("pane.add", { session_id: sessionId, value });
+      }
+    } else if (e.key === "Escape") {
+      input.remove();
+    }
+  });
+  els.paneBar.appendChild(input);
+  input.focus();
 }
 
 function applyProcessControl() {

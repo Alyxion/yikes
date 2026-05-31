@@ -54,6 +54,15 @@ class WebMessageHandler:
                 return {"type": "state", "state": self.controller.close_all()}
             if msg_type == "dir.list":
                 return {"type": "dir.entries", "data": self.controller.directory_entries(_optional_text(message.get("root")))}
+            if msg_type == "pane.add":
+                return {
+                    "type": "state",
+                    "state": self.controller.add_pane(
+                        str(message.get("session_id", "")),
+                        str(message.get("value", "")),
+                        title=_optional_text(message.get("title")),
+                    ),
+                }
             if msg_type == "process.start":
                 return {
                     "type": "state",

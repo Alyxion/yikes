@@ -5,11 +5,30 @@ from pathlib import Path
 import pytest
 
 from yikes.project_config import (
+    append_local_pane,
     find_project_config,
     load_project_config,
     normalize_port,
     starter_toml,
 )
+
+
+def test_local_panes_are_additive_and_allow_literal_host(tmp_path: Path) -> None:
+    (tmp_path / "yikes.toml").write_text('[[panes]]\nkind = "web"\ntitle = "App"\nport = 5173\n')
+    append_local_pane(tmp_path, {"kind": "web", "title": "Mine", "url": "http://192.168.1.9:3000"})
+
+    config = load_project_config(tmp_path)
+
+    assert [p["title"] for p in config.panes] == ["App", "Mine"]
+    assert config.panes[1]["url"] == "http://192.168.1.9:3000"  # literal host allowed in local file
+
+
+def test_local_only_config_is_loaded_without_committed_yikes_toml(tmp_path: Path) -> None:
+    append_local_pane(tmp_path, {"kind": "web", "title": "Solo", "port": 9000})
+
+    config = load_project_config(tmp_path)
+    assert len(config.panes) == 1
+    assert config.panes[0]["title"] == "Solo"
 
 
 def test_missing_config_returns_defaults(tmp_path: Path) -> None:

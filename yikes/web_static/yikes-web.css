@@ -203,6 +203,17 @@ button:hover {
 .pane-bar .pane-tab .dot.running { background: #34d399; }
 .pane-bar .pane-tab .dot.starting { background: #fbbf24; }
 .pane-bar .pane-tab .dot.failed { background: #f87171; }
+.pane-bar .pane-add { color: var(--muted); }
+.pane-bar .pane-add-input {
+  min-width: 200px;
+  margin: 0 4px;
+  padding: 4px 10px;
+  border: 1px solid #2b7eea;
+  border-radius: 6px 6px 0 0;
+  background: #171b21;
+  color: var(--text);
+  font-size: 12px;
+}
 
 .links {
   display: flex;

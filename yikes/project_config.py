@@ -42,28 +42,59 @@ def find_project_config(start: Path) -> Path | None:
     return None
 
 
-def load_project_config(cwd: Path) -> ProjectConfig:
-    """Load ``yikes.toml`` (with a ``yikes.local.toml`` overlay) for ``cwd``.
+def _find_config_dir(start: Path) -> Path | None:
+    start = start.expanduser().resolve()
+    for directory in (start, *start.parents):
+        if (directory / CONFIG_NAME).is_file() or (directory / LOCAL_CONFIG_NAME).is_file():
+            return directory
+    return None
 
-    A missing file yields a default :class:`ProjectConfig`.
+
+def load_project_config(cwd: Path) -> ProjectConfig:
+    """Load ``yikes.toml`` plus a ``yikes.local.toml`` overlay for ``cwd``.
+
+    Scalars in the gitignored local file win; ``panes``/``links`` are additive
+    (committed entries first, then local). A missing file yields defaults.
     """
-    config_path = find_project_config(cwd)
-    if config_path is None:
+    directory = _find_config_dir(cwd)
+    if directory is None:
         return ProjectConfig()
-    data = _read_toml(config_path)
-    local_path = config_path.with_name(LOCAL_CONFIG_NAME)
-    if local_path.is_file():
-        data.update(_read_toml(local_path))
+    base = _read_toml(directory / CONFIG_NAME) if (directory / CONFIG_NAME).is_file() else {}
+    local = _read_toml(directory / LOCAL_CONFIG_NAME) if (directory / LOCAL_CONFIG_NAME).is_file() else {}
+    scalars = {**base, **local}
+    # Committed config may not hardcode a host; the gitignored local file may.
+    panes = _normalize_panes(base.get("panes")) + _normalize_panes(local.get("panes"), allow_literal_host=True)
+    links = _normalize_links(base.get("links")) + _normalize_links(local.get("links"), allow_literal_host=True)
     return ProjectConfig(
-        backend=_optional_str(data.get("backend")),
-        isolated=bool(data.get("isolated", False)),
-        ports=_normalize_ports(data.get("ports")),
-        name=_optional_str(data.get("name")),
-        model=_optional_str(data.get("model")),
-        panes=_normalize_panes(data.get("panes")),
-        links=_normalize_links(data.get("links")),
-        source=config_path,
+        backend=_optional_str(scalars.get("backend")),
+        isolated=bool(scalars.get("isolated", False)),
+        ports=_normalize_ports(scalars.get("ports")),
+        name=_optional_str(scalars.get("name")),
+        model=_optional_str(scalars.get("model")),
+        panes=panes,
+        links=links,
+        source=directory / CONFIG_NAME,
     )
+
+
+def append_local_pane(cwd: Path, pane: dict) -> Path:
+    """Append a pane to the gitignored ``yikes.local.toml`` next to ``cwd``."""
+    path = Path(cwd).expanduser() / LOCAL_CONFIG_NAME
+    chunk: list[str] = []
+    if not path.exists():
+        chunk.append("# yikes! personal panes (gitignored). Added at runtime.\n")
+    chunk.append("\n[[panes]]\n")
+    for key in ("kind", "title", "url", "port", "path", "start", "stop", "source", "refresh"):
+        value = pane.get(key)
+        if value is None:
+            continue
+        if isinstance(value, int) and not isinstance(value, bool):
+            chunk.append(f"{key} = {value}\n")
+        else:
+            chunk.append(f'{key} = "{value}"\n')
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("".join(chunk))
+    return path
 
 
 def normalize_port(value: object) -> tuple[str, str]:
@@ -120,7 +151,7 @@ def _has_literal_host(url: str) -> bool:
     return match.group(1) != "{host}"
 
 
-def _normalize_panes(value: object) -> tuple[dict, ...]:
+def _normalize_panes(value: object, *, allow_literal_host: bool = False) -> tuple[dict, ...]:
     if value is None:
         return ()
     if not isinstance(value, (list, tuple)):
@@ -132,7 +163,7 @@ def _normalize_panes(value: object) -> tuple[dict, ...]:
         kind = str(item.get("kind", "web")).strip().lower()
         title = _optional_str(item.get("title")) or kind.capitalize()
         url = _optional_str(item.get("url"))
-        if url and _has_literal_host(url):
+        if url and not allow_literal_host and _has_literal_host(url):
             raise ValueError(
                 "yikes.toml: a pane 'url' must not contain a literal host/IP "
                 "(it is committed and machine-specific). Use 'port' or the {host} placeholder."
@@ -155,7 +186,7 @@ def _normalize_panes(value: object) -> tuple[dict, ...]:
     return tuple(panes)
 
 
-def _normalize_links(value: object) -> tuple[dict, ...]:
+def _normalize_links(value: object, *, allow_literal_host: bool = False) -> tuple[dict, ...]:
     if value is None:
         return ()
     if not isinstance(value, (list, tuple)):
@@ -165,7 +196,7 @@ def _normalize_links(value: object) -> tuple[dict, ...]:
         if not isinstance(item, dict):
             continue
         url = _optional_str(item.get("url"))
-        if url and _has_literal_host(url):
+        if url and not allow_literal_host and _has_literal_host(url):
             raise ValueError(
                 "yikes.toml: a link 'url' must not contain a literal host/IP. Use 'port' or {host}."
             )
