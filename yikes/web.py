@@ -165,6 +165,12 @@ def create_app(
         except WebSocketDisconnect:
             return
 
+    @app.on_event("shutdown")
+    async def _stop_pane_processes() -> None:
+        manager = getattr(app.state.yikes, "process_manager", None)
+        if manager is not None:
+            manager.stop_all()
+
     return app
 
 

@@ -50,17 +50,36 @@ def _find_config_dir(start: Path) -> Path | None:
     return None
 
 
+_config_cache: dict[str, tuple[tuple, "ProjectConfig"]] = {}
+
+
 def load_project_config(cwd: Path) -> ProjectConfig:
     """Load ``yikes.toml`` plus a ``yikes.local.toml`` overlay for ``cwd``.
 
     Scalars in the gitignored local file win; ``panes``/``links`` are additive
     (committed entries first, then local). A missing file yields defaults.
+    Results are cached by file mtimes so repeated polls don't re-parse.
     """
     directory = _find_config_dir(cwd)
     if directory is None:
         return ProjectConfig()
-    base = _read_toml(directory / CONFIG_NAME) if (directory / CONFIG_NAME).is_file() else {}
-    local = _read_toml(directory / LOCAL_CONFIG_NAME) if (directory / LOCAL_CONFIG_NAME).is_file() else {}
+    main_path = directory / CONFIG_NAME
+    local_path = directory / LOCAL_CONFIG_NAME
+    signature = (
+        main_path.stat().st_mtime_ns if main_path.is_file() else None,
+        local_path.stat().st_mtime_ns if local_path.is_file() else None,
+    )
+    cached = _config_cache.get(str(directory))
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    config = _build_project_config(directory, main_path, local_path)
+    _config_cache[str(directory)] = (signature, config)
+    return config
+
+
+def _build_project_config(directory: Path, main_path: Path, local_path: Path) -> ProjectConfig:
+    base = _read_toml(main_path) if main_path.is_file() else {}
+    local = _read_toml(local_path) if local_path.is_file() else {}
     scalars = {**base, **local}
     # Committed config may not hardcode a host; the gitignored local file may.
     panes = _normalize_panes(base.get("panes")) + _normalize_panes(local.get("panes"), allow_literal_host=True)
@@ -91,7 +110,8 @@ def append_local_pane(cwd: Path, pane: dict) -> Path:
         if isinstance(value, int) and not isinstance(value, bool):
             chunk.append(f"{key} = {value}\n")
         else:
-            chunk.append(f'{key} = "{value}"\n')
+            escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+            chunk.append(f'{key} = "{escaped}"\n')
     with path.open("a", encoding="utf-8") as handle:
         handle.write("".join(chunk))
     return path

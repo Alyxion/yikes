@@ -121,6 +121,20 @@ def test_index_cache_busts_assets(tmp_path: Path) -> None:
         assert "yikes-web.js?v=" in page.text
 
 
+def test_web_shutdown_stops_pane_processes(tmp_path: Path) -> None:
+    auth = WebAuthConfig(secret="test-secret", login_key="k", developer_mode=True)
+    app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)
+    manager = app.state.yikes.process_manager
+    key = manager.key("sess", "pane-0")
+    manager.start(key, "sleep 30", str(tmp_path))
+    assert manager.snapshot()[key]["status"] == "running"
+
+    with TestClient(app):  # entering+exiting fires startup+shutdown events
+        pass
+
+    assert manager.snapshot()[key]["status"] == "stopped"
+
+
 def test_web_login_throttles_brute_force(tmp_path: Path) -> None:
     auth = WebAuthConfig(secret="test-secret", login_key="right-key", developer_mode=True)
     app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)

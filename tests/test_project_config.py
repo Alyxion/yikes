@@ -23,6 +23,13 @@ def test_local_panes_are_additive_and_allow_literal_host(tmp_path: Path) -> None
     assert config.panes[1]["url"] == "http://192.168.1.9:3000"  # literal host allowed in local file
 
 
+def test_append_local_pane_escapes_quotes(tmp_path: Path) -> None:
+    append_local_pane(tmp_path, {"kind": "web", "title": 'My "App"', "url": "http://{host}:3000"})
+
+    config = load_project_config(tmp_path)  # must parse despite the quote
+    assert config.panes[0]["title"] == 'My "App"'
+
+
 def test_local_only_config_is_loaded_without_committed_yikes_toml(tmp_path: Path) -> None:
     append_local_pane(tmp_path, {"kind": "web", "title": "Solo", "port": 9000})
 
