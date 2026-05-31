@@ -50,6 +50,9 @@ def create_app(
     app.state.yikes_web_handler = WebMessageHandler(app.state.yikes, app.state.yikes_terminals)
     app.state.yikes_auth = auth or WebAuthConfig.load(developer_mode=developer_mode_from_env())
     app.state.yikes_login_throttle = LoginThrottle()
+    from .process_manager import ManagedProcessManager
+
+    app.state.yikes.process_manager = ManagedProcessManager()
     _mount_llming_stage(app, use_stage=use_stage)
 
     @app.middleware("http")

@@ -83,6 +83,7 @@ class YikesAppController:
         self._lock = RLock()
         self.output_service = SessionOutputService()
         self.prompt_profile = load_prompt_profile()
+        self.process_manager = None  # set by the web layer; manages pane processes
         self._restore_latest_session()
 
     def state(self) -> dict[str, Any]:
@@ -106,6 +107,7 @@ class YikesAppController:
                 "output_text": self.output_text(),
                 "controls": self.controls(),
                 "links": _links_for(next((s for s in sessions if s.id == active), None)),
+                "processes": self.process_manager.snapshot() if self.process_manager else {},
                 "pending_new": self.pending_new.to_json() if self.pending_new else None,
                 "submission_active": self.submission_active,
                 "error": error,
@@ -361,6 +363,39 @@ class YikesAppController:
             self.lines = []
         return self.state()
 
+    def start_pane_process(self, session_id: str, pane_id: str) -> dict[str, Any]:
+        spec = self._pane_process_spec(session_id, pane_id)
+        if self.process_manager is not None and spec and spec.get("start"):
+            from .process_manager import ManagedProcessManager
+
+            self.process_manager.start(
+                ManagedProcessManager.key(session_id, pane_id),
+                spec["start"],
+                spec["cwd"],
+                stop_command=spec.get("stop"),
+            )
+        return self.state()
+
+    def stop_pane_process(self, session_id: str, pane_id: str) -> dict[str, Any]:
+        if self.process_manager is not None:
+            from .process_manager import ManagedProcessManager
+
+            self.process_manager.stop(ManagedProcessManager.key(session_id, pane_id))
+        return self.state()
+
+    def _pane_process_spec(self, session_id: str, pane_id: str) -> dict[str, Any] | None:
+        session = next((s for s in self.sessions() if s.id == session_id), None)
+        if session is None or not pane_id.startswith("pane-"):
+            return None
+        config = _session_config(session)
+        if config is None:
+            return None
+        try:
+            pane = config.panes[int(pane_id.split("-", 1)[1])]
+        except (ValueError, IndexError):
+            return None
+        return {"start": pane.get("start"), "stop": pane.get("stop"), "cwd": session.location}
+
     def attach_command(self, session_id: str | None = None) -> tuple[str, list[str]] | None:
         selected = session_id or self._attachable_session_id()
         if not selected:
@@ -604,7 +639,9 @@ def _panes_for(session: SessionSummary) -> list[dict]:
     config = _session_config(session)
     if config is not None:
         for index, pane in enumerate(config.panes):
-            panes.append({**pane, "id": f"pane-{index}"})
+            entry = {**pane, "id": f"pane-{index}"}
+            entry["canControl"] = bool(pane.get("start"))
+            panes.append(entry)
     return panes
 
 

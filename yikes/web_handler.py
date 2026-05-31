@@ -54,6 +54,20 @@ class WebMessageHandler:
                 return {"type": "state", "state": self.controller.close_all()}
             if msg_type == "dir.list":
                 return {"type": "dir.entries", "data": self.controller.directory_entries(_optional_text(message.get("root")))}
+            if msg_type == "process.start":
+                return {
+                    "type": "state",
+                    "state": self.controller.start_pane_process(
+                        str(message.get("session_id", "")), str(message.get("pane_id", ""))
+                    ),
+                }
+            if msg_type == "process.stop":
+                return {
+                    "type": "state",
+                    "state": self.controller.stop_pane_process(
+                        str(message.get("session_id", "")), str(message.get("pane_id", ""))
+                    ),
+                }
             if msg_type == "term.open":
                 return self._open_terminal(message)
             if msg_type == "term.resize":

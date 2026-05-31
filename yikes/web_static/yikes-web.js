@@ -50,6 +50,7 @@ const els = {
   webFwd: document.getElementById("web-fwd"),
   webReload: document.getElementById("web-reload"),
   webToggle: document.getElementById("web-toggle"),
+  webProc: document.getElementById("web-proc"),
   webOpen: document.getElementById("web-open"),
   webPlaceholder: document.getElementById("web-placeholder"),
   dataPane: document.getElementById("data-pane"),
@@ -590,7 +591,9 @@ function applyPanes(next, session, panes, noSession) {
     detachTerminalPane();
     if (pane.kind === "web") {
       stopDataTimer();
+      state.activeWebPane = { session, pane };
       showWebPane(session, pane);
+      applyProcessControl();
     } else if (pane.kind === "data") {
       state.activeWebKey = "";
       showDataPane(session, pane);
@@ -599,18 +602,39 @@ function applyPanes(next, session, panes, noSession) {
   return pane;
 }
 
+function paneStatus(session, pane) {
+  if (!pane.canControl) return "";
+  return (state.app?.processes?.[`${session.id}:${pane.id}`] || {}).status || "stopped";
+}
+
 function renderPaneBar(session, panes, activeId) {
-  const key = `${session.id}:${panes.map(p => `${p.id}/${p.title}/${p.status || ""}`).join("|")}:${activeId}`;
+  const key = `${session.id}:${panes.map(p => `${p.id}/${p.title}/${paneStatus(session, p)}`).join("|")}:${activeId}`;
   if (key === state.renderedPaneBarKey) return;
   state.renderedPaneBarKey = key;
   els.paneBar.replaceChildren(...panes.map(p => {
     const tab = document.createElement("button");
     tab.className = `pane-tab ${p.id === activeId ? "active" : ""}`;
-    const dot = p.status ? `<span class="dot ${escapeHtml(p.status)}"></span>` : "";
+    const status = paneStatus(session, p);
+    const dot = status ? `<span class="dot ${escapeHtml(status)}"></span>` : "";
     tab.innerHTML = `${dot}${escapeHtml(p.title)}`;
     tab.onclick = () => selectPane(session.id, p.id);
     return tab;
   }));
+}
+
+function applyProcessControl() {
+  const info = state.activeWebPane;
+  if (!info || !info.pane.canControl) {
+    els.webProc.classList.add("hidden");
+    return;
+  }
+  const status = paneStatus(info.session, info.pane);
+  const running = status === "running" || status === "starting";
+  els.webProc.classList.remove("hidden");
+  els.webProc.textContent = running ? "■ Stop" : "▶ Start";
+  els.webProc.title = running ? "Stop the process" : "Start the process";
+  els.webProc.onclick = () =>
+    send(running ? "process.stop" : "process.start", { session_id: info.session.id, pane_id: info.pane.id });
 }
 
 function attachTerminalPane(session) {
