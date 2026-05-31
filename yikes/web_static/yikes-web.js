@@ -244,7 +244,9 @@ function render(next) {
   const activeSession = (next.sessions || []).find(s => s.id === next.active_session_id) || null;
   const panes = (activeSession && activeSession.panes) || [];
   const activePane = applyPanes(next, activeSession, panes, noSession);
-  const showPaneBar = !noSession && panes.length > 1;
+  // Always show the sub-tab bar for a session with panes (even just Terminal),
+  // so the "＋ web" add affordance is available without any yikes.toml.
+  const showPaneBar = !noSession && panes.length > 0;
   els.paneBar.classList.toggle("hidden", !showPaneBar);
   els.noSession.classList.toggle("hidden", !noSession);
   // Terminal pane (or a non-pane CLI session) uses the terminal panel; web/data
