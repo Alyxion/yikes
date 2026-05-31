@@ -64,6 +64,50 @@ def test_normalize_port_accepts_int_and_string() -> None:
         normalize_port(True)
 
 
+def test_config_parses_web_pane_and_links(tmp_path: Path) -> None:
+    (tmp_path / "yikes.toml").write_text(
+        "[[panes]]\n"
+        'kind = "web"\n'
+        'title = "App"\n'
+        "port = 5173\n"
+        "\n"
+        "[[panes]]\n"
+        'kind = "data"\n'
+        'title = "Health"\n'
+        'source = "builtin:health"\n'
+        "refresh = 3\n"
+        "\n"
+        "[[links]]\n"
+        'title = "Docs"\n'
+        "port = 8000\n"
+    )
+
+    config = load_project_config(tmp_path)
+
+    assert len(config.panes) == 2
+    assert config.panes[0]["kind"] == "web"
+    assert config.panes[0]["title"] == "App"
+    assert config.panes[0]["port"] == "5173"
+    assert config.panes[1]["kind"] == "data"
+    assert config.panes[1]["refresh"] == 3
+    assert config.links[0]["title"] == "Docs"
+    assert config.links[0]["port"] == "8000"
+
+
+def test_config_rejects_literal_host_in_pane_url(tmp_path: Path) -> None:
+    (tmp_path / "yikes.toml").write_text('[[panes]]\nkind = "web"\nurl = "http://192.168.1.5:5173"\n')
+
+    with pytest.raises(ValueError):
+        load_project_config(tmp_path)
+
+
+def test_config_allows_host_placeholder_in_pane_url(tmp_path: Path) -> None:
+    (tmp_path / "yikes.toml").write_text('[[panes]]\nkind = "web"\nurl = "http://{host}:{port}/admin"\nport = 8080\n')
+
+    config = load_project_config(tmp_path)
+    assert config.panes[0]["url"] == "http://{host}:{port}/admin"
+
+
 def test_starter_toml_is_commented_template() -> None:
     text = starter_toml()
     assert "backend" in text

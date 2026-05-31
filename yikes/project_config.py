@@ -9,6 +9,7 @@ personal overrides on top of the shared file.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +27,8 @@ class ProjectConfig:
     ports: tuple[tuple[str, str], ...] = ()
     name: str | None = None
     model: str | None = None
+    panes: tuple[dict, ...] = ()
+    links: tuple[dict, ...] = ()
     source: Path | None = None
 
 
@@ -57,6 +60,8 @@ def load_project_config(cwd: Path) -> ProjectConfig:
         ports=_normalize_ports(data.get("ports")),
         name=_optional_str(data.get("name")),
         model=_optional_str(data.get("model")),
+        panes=_normalize_panes(data.get("panes")),
+        links=_normalize_links(data.get("links")),
         source=config_path,
     )
 
@@ -104,6 +109,74 @@ def _normalize_ports(value: object) -> tuple[tuple[str, str], ...]:
     if not isinstance(value, (list, tuple)):
         raise ValueError("yikes.toml: 'ports' must be a list")
     return tuple(normalize_port(item) for item in value)
+
+
+# A committed config must never hardcode a host/IP; web targets are declared by
+# port (or a {host} template) and resolved at runtime to the browser's host.
+def _has_literal_host(url: str) -> bool:
+    match = re.match(r"^[a-zA-Z][\w+.-]*://([^/:\s]+)", url)
+    if not match:
+        return False  # relative path or no scheme -> no host to leak
+    return match.group(1) != "{host}"
+
+
+def _normalize_panes(value: object) -> tuple[dict, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("yikes.toml: 'panes' must be an array of tables ([[panes]])")
+    panes: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "web")).strip().lower()
+        title = _optional_str(item.get("title")) or kind.capitalize()
+        url = _optional_str(item.get("url"))
+        if url and _has_literal_host(url):
+            raise ValueError(
+                "yikes.toml: a pane 'url' must not contain a literal host/IP "
+                "(it is committed and machine-specific). Use 'port' or the {host} placeholder."
+            )
+        pane: dict = {
+            "kind": kind,
+            "title": title,
+            "url": url,
+            "port": _optional_str(item.get("port")),
+            "path": _optional_str(item.get("path")),
+        }
+        if kind == "web":
+            pane["autostart"] = bool(item.get("autostart", False))
+            pane["start"] = _optional_str(item.get("start"))
+            pane["stop"] = _optional_str(item.get("stop"))
+        elif kind == "data":
+            pane["source"] = _optional_str(item.get("source"))
+            pane["refresh"] = max(1, int(item.get("refresh", 5)))
+        panes.append(pane)
+    return tuple(panes)
+
+
+def _normalize_links(value: object) -> tuple[dict, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("yikes.toml: 'links' must be an array of tables ([[links]])")
+    links: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        url = _optional_str(item.get("url"))
+        if url and _has_literal_host(url):
+            raise ValueError(
+                "yikes.toml: a link 'url' must not contain a literal host/IP. Use 'port' or {host}."
+            )
+        links.append(
+            {
+                "title": _optional_str(item.get("title")) or "Link",
+                "url": url,
+                "port": _optional_str(item.get("port")),
+            }
+        )
+    return tuple(links)
 
 
 def _optional_str(value: object) -> str | None:

@@ -6,14 +6,17 @@ from pathlib import Path
 def test_web_layout_does_not_reserve_bottom_spacer_row() -> None:
     css = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.css").read_text()
 
-    assert "grid-template-rows: 48px minmax(0, 1fr) auto;" in css
+    # topbar / pane-bar / content / composer — no fixed-height bottom spacer row.
+    assert "grid-template-rows: 48px auto minmax(0, 1fr) auto;" in css
     assert "grid-template-rows: 48px minmax(0, 1fr) auto 56px;" not in css
 
 
 def test_web_hides_composer_when_no_session_is_active() -> None:
     js = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.js").read_text()
 
-    assert 'els.composer.classList.toggle("hidden", state.terminalMode || noSession);' in js
+    # Composer only shows for non-interactive (pane-less) chat sessions.
+    assert "const composerHidden = noSession || panes.length > 0;" in js
+    assert 'els.composer.classList.toggle("hidden", composerHidden);' in js
     assert "els.message.disabled = noSession;" in js
 
 
@@ -48,8 +51,9 @@ def test_fullscreen_terminal_uses_single_grid_row_and_restores_tab() -> None:
 
     assert "body.terminal-exclusive .topbar" in css
     assert "body.terminal-exclusive .terminal-panel {\n  grid-row: 1;" in css
-    assert "state.returnSessionId = state.app.active_session_id || \"\";" in js
-    assert 'send("session.switch", { session_id: returnSessionId });' in js
+    # Fullscreen toggles in place (stays attached) rather than detaching.
+    assert "function enterFullscreen()" in js
+    assert "function exitFullscreen()" in js
 
 
 def test_web_polls_active_sessions_fast_enough_for_tmux_streaming() -> None:

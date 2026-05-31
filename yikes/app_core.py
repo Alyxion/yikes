@@ -16,6 +16,7 @@ from .drivers import ensure_interactive_session
 from .output import OutputContext, SessionOutputService
 from .prompt_profile import DEFAULT_PROMPT_PROFILE_PATH, load_prompt_profile
 from .services import BackendTransport, ChatTransport, Conversation
+from .project_config import load_project_config
 from .session_inventory import SessionInventory, SessionLifecycle, SessionSummary, project_label, record_direct_session
 from .state import AppState, load_app_state, save_app_state
 
@@ -104,6 +105,7 @@ class YikesAppController:
                 "output_view": self.output_view,
                 "output_text": self.output_text(),
                 "controls": self.controls(),
+                "links": _links_for(next((s for s in sessions if s.id == active), None)),
                 "pending_new": self.pending_new.to_json() if self.pending_new else None,
                 "submission_active": self.submission_active,
                 "error": error,
@@ -567,6 +569,7 @@ class YikesAppController:
             "state": session.state,
             "location": session.location,
             "detail": session.detail,
+            "panes": _panes_for(session),
         }
         if activity is not None:
             data["activity"] = activity.to_json()
@@ -581,6 +584,33 @@ class YikesAppController:
         if location is ExecutionLocation.DOCKER:
             return Driver.DOCKER
         return Driver.TMUX if mode is DriverMode.TMUX else Driver.DIRECT
+
+
+def _session_config(session: SessionSummary | None):
+    """Best-effort project config for a session (from its cwd), never raising."""
+    if session is None:
+        return None
+    try:
+        return load_project_config(Path(session.location))
+    except Exception:
+        return None  # a bad yikes.toml must not break the whole state payload
+
+
+def _panes_for(session: SessionSummary) -> list[dict]:
+    """Sub-tabs for a session: the live terminal first, then configured panes."""
+    panes: list[dict] = []
+    if session.runtime in {"tmux", "docker"}:
+        panes.append({"id": "terminal", "kind": "terminal", "title": "Terminal"})
+    config = _session_config(session)
+    if config is not None:
+        for index, pane in enumerate(config.panes):
+            panes.append({**pane, "id": f"pane-{index}"})
+    return panes
+
+
+def _links_for(session: SessionSummary | None) -> list[dict]:
+    config = _session_config(session)
+    return [dict(link) for link in config.links] if config is not None else []
 
 
 def _normalize_output_view(value: str) -> str | None:

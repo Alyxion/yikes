@@ -24,17 +24,35 @@ const state = {
   lastErrorAt: 0,
   fitPending: false,
   creatingSession: false,
+  lastSentTermSize: "",
+  activePaneBySession: {},   // sessionId -> paneId
+  webNav: {},                // paneKey -> { stack: [url], index, loaded }
+  activeWebKey: "",
+  renderedPaneBarKey: "",
+  dataTimer: null,
 };
 
 const els = {
   status: document.getElementById("status"),
   activityPill: document.getElementById("activity-pill"),
+  links: document.getElementById("links"),
   tabs: document.getElementById("tabs"),
   viewToggle: document.getElementById("view-toggle"),
   terminal: document.getElementById("terminal"),
   terminalModeBar: document.getElementById("terminal-mode-bar"),
   termReturn: document.getElementById("term-return"),
   terminalPanel: document.getElementById("terminal-panel"),
+  paneBar: document.getElementById("pane-bar"),
+  webPane: document.getElementById("web-pane"),
+  webFrame: document.getElementById("web-frame"),
+  webUrl: document.getElementById("web-url"),
+  webBack: document.getElementById("web-back"),
+  webFwd: document.getElementById("web-fwd"),
+  webReload: document.getElementById("web-reload"),
+  webToggle: document.getElementById("web-toggle"),
+  webOpen: document.getElementById("web-open"),
+  webPlaceholder: document.getElementById("web-placeholder"),
+  dataPane: document.getElementById("data-pane"),
   composer: document.getElementById("composer"),
   message: document.getElementById("message"),
   suggestions: document.getElementById("suggestions"),
@@ -128,8 +146,9 @@ function setupTerminal() {
   state.fit.fit();
   state.term.onData(data => {
     if (!state.terminalMode) return;
-    if (data.includes("\x02")) {
-      closeTerminalMode();
+    // Ctrl-b leaves fullscreen; in split it passes through to tmux as the prefix.
+    if (data.includes("\x02") && state.terminalExclusive) {
+      exitFullscreen();
       return;
     }
     sendTerminalData(data);
@@ -205,7 +224,7 @@ function handleMessage(message) {
         if (state.ws) state.ws.close();
         return;
       }
-      closeTerminalMode();
+      detachTerminalPane();
       showError("The browser control socket is stale. Hard-refresh this tab and retry /term.");
       return;
     }
@@ -215,20 +234,32 @@ function handleMessage(message) {
 
 function render(next) {
   state.app = next;
-  maybeAutoAttachInteractive(next);
   renderStatus(next.status, next.active_session_activity);
   renderTabs(next.sessions, next.active_session_id);
   renderViewToggle(next.output_view);
   renderWizard(next.pending_new);
+  renderLinks(next.links || []);
   const noSession = !next.has_active_session && !next.pending_new;
+  const activeSession = (next.sessions || []).find(s => s.id === next.active_session_id) || null;
+  const panes = (activeSession && activeSession.panes) || [];
+  const activePane = applyPanes(next, activeSession, panes, noSession);
+  const showPaneBar = !noSession && panes.length > 1;
+  els.paneBar.classList.toggle("hidden", !showPaneBar);
   els.noSession.classList.toggle("hidden", !noSession);
-  els.terminalPanel.classList.toggle("hidden", noSession);
-  // Hide the chat composer whenever a live terminal is attached — you type into
-  // the terminal itself, so the bottom bar is just confusing there.
-  els.composer.classList.toggle("hidden", state.terminalMode || noSession);
+  // Terminal pane (or a non-pane CLI session) uses the terminal panel; web/data
+  // panes replace it.
+  const terminalPaneActive = !activePane || activePane.kind === "terminal";
+  els.terminalPanel.classList.toggle("hidden", noSession || !terminalPaneActive);
+  els.webPane.classList.toggle("hidden", noSession || !activePane || activePane.kind !== "web");
+  els.dataPane.classList.toggle("hidden", noSession || !activePane || activePane.kind !== "data");
+  // Composer is only for non-interactive (no-pane) chat sessions; interactive
+  // sessions are driven through their panes.
+  const composerHidden = noSession || panes.length > 0;
+  els.composer.classList.toggle("hidden", composerHidden);
   els.composer.classList.toggle("disabled", noSession);
   els.message.disabled = noSession;
-  els.terminalModeBar.classList.toggle("hidden", !state.terminalMode);
+  // The return-to-split control only matters in fullscreen.
+  els.terminalModeBar.classList.toggle("hidden", !state.terminalExclusive);
   document.body.classList.toggle("terminal-exclusive", state.terminalExclusive);
   if (state.term) {
     let outputChanged = false;
@@ -501,15 +532,20 @@ function handleLocalCommand(text) {
   const rawCommand = text.trim().split(/\s+/, 1)[0].toLowerCase();
   const command = resolveLocalCommand(rawCommand);
   if (command === "/term") {
-    openTerminalMode({ exclusive: false });
+    const active = state.app?.active_session_id;
+    const session = (state.app?.sessions || []).find(s => s.id === active);
+    const panes = (session && session.panes) || [];
+    const terminalPane = panes.find(p => p.kind === "terminal");
+    if (session && terminalPane) selectPane(session.id, terminalPane.id);
     return true;
   }
   if (command === "/fullscreen" || command === "/overtake") {
-    openTerminalMode({ exclusive: true });
+    if (!state.terminalMode) attachTerminalPane(state.app?.sessions?.find(s => s.id === state.app?.active_session_id) || {});
+    enterFullscreen();
     return true;
   }
   if (command === "/resume") {
-    closeTerminalMode();
+    exitFullscreen();
     return true;
   }
   return false;
@@ -522,40 +558,252 @@ function resolveLocalCommand(rawCommand) {
   return matches.length === 1 ? matches[0] : rawCommand;
 }
 
-function maybeAutoAttachInteractive(next) {
-  // Interactive (tmux/docker) sessions render nothing in the extracted view by
-  // design — show their live terminal instead. Attach once per session so a
-  // manual /resume sticks, and drop the terminal when the active session is a
-  // non-interactive (direct CLI) one.
-  if (!state.term || state.creatingSession || state.terminalExclusive || next.pending_new) return;
-  const id = next.active_session_id || "";
-  const session = id ? (next.sessions || []).find(s => s.id === id) : null;
-  const interactive = !!session && (session.runtime === "tmux" || session.runtime === "docker");
-  if (!interactive) {
-    if (state.terminalMode) closeTerminalMode();
-    state.autoAttachedSession = "";
-    return;
-  }
-  if (state.autoAttachedSession === id) return;
-  state.autoAttachedSession = id;
-  openTerminalMode({ exclusive: false });
+// ---- Panes (sub-tabs) ----------------------------------------------------
+
+function activePaneId(session, panes) {
+  if (!session || !panes.length) return null;
+  const stored = state.activePaneBySession[session.id];
+  if (stored && panes.some(p => p.id === stored)) return stored;
+  return panes[0].id;
 }
 
-function openTerminalMode({ exclusive }) {
-  if (!state.app?.active_session_id) {
-    showError("No active tmux session is selected.");
+function selectPane(sessionId, paneId) {
+  state.activePaneBySession[sessionId] = paneId;
+  state.renderedPaneBarKey = "";
+  if (state.app) render(state.app);
+}
+
+function applyPanes(next, session, panes, noSession) {
+  if (noSession || !session || !panes.length) {
+    stopDataTimer();
+    state.activeWebKey = "";
+    return null;
+  }
+  const paneId = activePaneId(session, panes);
+  const pane = panes.find(p => p.id === paneId) || panes[0];
+  renderPaneBar(session, panes, pane.id);
+  if (pane.kind === "terminal") {
+    stopDataTimer();
+    state.activeWebKey = "";
+    attachTerminalPane(session);
+  } else {
+    detachTerminalPane();
+    if (pane.kind === "web") {
+      stopDataTimer();
+      showWebPane(session, pane);
+    } else if (pane.kind === "data") {
+      state.activeWebKey = "";
+      showDataPane(session, pane);
+    }
+  }
+  return pane;
+}
+
+function renderPaneBar(session, panes, activeId) {
+  const key = `${session.id}:${panes.map(p => `${p.id}/${p.title}/${p.status || ""}`).join("|")}:${activeId}`;
+  if (key === state.renderedPaneBarKey) return;
+  state.renderedPaneBarKey = key;
+  els.paneBar.replaceChildren(...panes.map(p => {
+    const tab = document.createElement("button");
+    tab.className = `pane-tab ${p.id === activeId ? "active" : ""}`;
+    const dot = p.status ? `<span class="dot ${escapeHtml(p.status)}"></span>` : "";
+    tab.innerHTML = `${dot}${escapeHtml(p.title)}`;
+    tab.onclick = () => selectPane(session.id, p.id);
+    return tab;
+  }));
+}
+
+function attachTerminalPane(session) {
+  const interactive = session.runtime === "tmux" || session.runtime === "docker";
+  if (!interactive || !state.term || state.creatingSession) return;
+  // (Re)attach when not attached, or attached to a different session's terminal.
+  if (state.terminalMode && state.attachTargetSession === session.id) return;
+  openTerminalMode();
+}
+
+function detachTerminalPane() {
+  if (!state.terminalMode) return;
+  closeTerminalSocket();
+  state.lastSentTermSize = "";
+  state.terminalMode = false;
+  state.terminalExclusive = false;
+  state.pendingTerminalOpen = null;
+  state.attachTargetSession = "";
+  document.body.classList.remove("terminal-exclusive");
+}
+
+function enterFullscreen() {
+  if (!state.terminalMode) return;
+  state.terminalExclusive = true;
+  document.body.classList.add("terminal-exclusive");
+  resizeActiveTerminalRepeatedly();
+}
+
+function exitFullscreen() {
+  state.terminalExclusive = false;
+  document.body.classList.remove("terminal-exclusive");
+  resizeActiveTerminalRepeatedly();
+}
+
+// ---- Web pane ------------------------------------------------------------
+
+function resolveTargetUrl(spec) {
+  const host = location.hostname || "localhost";
+  if (spec.url) {
+    let url = spec.url.split("{host}").join(host);
+    if (spec.port) url = url.split("{port}").join(spec.port);
+    return url;
+  }
+  if (spec.port) return `${location.protocol}//${host}:${spec.port}${spec.path || ""}`;
+  return "";
+}
+
+function showWebPane(session, pane) {
+  const key = `${session.id}:${pane.id}`;
+  if (state.activeWebKey === key && state.webNav[key]) return;
+  state.activeWebKey = key;
+  if (!state.webNav[key]) {
+    const url = resolveTargetUrl(pane);
+    state.webNav[key] = { stack: url ? [url] : [], index: url ? 0 : -1, loaded: true };
+  }
+  applyWebNav();
+}
+
+function currentWebNav() {
+  return state.webNav[state.activeWebKey] || null;
+}
+
+function applyWebNav() {
+  const nav = currentWebNav();
+  if (!nav) return;
+  const url = nav.stack[nav.index] || "";
+  els.webUrl.value = url;
+  els.webOpen.href = url || "#";
+  els.webBack.disabled = nav.index <= 0;
+  els.webFwd.disabled = nav.index >= nav.stack.length - 1;
+  els.webToggle.textContent = nav.loaded ? "⏻" : "▶";
+  els.webToggle.title = nav.loaded ? "Unload (stop loading the page)" : "Load the page";
+  els.webPlaceholder.classList.toggle("hidden", nav.loaded);
+  if (nav.loaded) {
+    if (url && els.webFrame.getAttribute("src") !== url) els.webFrame.src = url;
+  } else {
+    els.webPlaceholder.textContent = "Page unloaded — click ▶ to load it.";
+    els.webFrame.removeAttribute("src");
+  }
+}
+
+function webGo(index, { reload } = {}) {
+  const nav = currentWebNav();
+  if (!nav) return;
+  if (index !== undefined) nav.index = Math.max(0, Math.min(index, nav.stack.length - 1));
+  nav.loaded = true;
+  const url = nav.stack[nav.index] || "";
+  if (reload && url) els.webFrame.src = url;            // force a fresh load
+  applyWebNav();
+  if (reload && url && els.webFrame.getAttribute("src") === url) {
+    // ensure reload even when src is unchanged
+    els.webFrame.contentWindow && (els.webFrame.src = url);
+  }
+}
+
+function webNavigateTo(rawUrl) {
+  const nav = currentWebNav();
+  if (!nav) return;
+  let url = rawUrl.trim();
+  if (!url) return;
+  if (!/^[a-zA-Z][\w+.-]*:\/\//.test(url)) url = "http://" + url;
+  nav.stack = nav.stack.slice(0, nav.index + 1);
+  nav.stack.push(url);
+  nav.index = nav.stack.length - 1;
+  nav.loaded = true;
+  els.webFrame.src = url;
+  applyWebNav();
+}
+
+// ---- Data pane -----------------------------------------------------------
+
+function stopDataTimer() {
+  if (state.dataTimer) {
+    clearInterval(state.dataTimer);
+    state.dataTimer = null;
+  }
+}
+
+function showDataPane(session, pane) {
+  const key = `${session.id}:${pane.id}`;
+  if (state.activeDataKey === key) return;
+  state.activeDataKey = key;
+  stopDataTimer();
+  const refresh = Math.max(1, Number(pane.refresh) || 5);
+  const load = () => loadDataPane(session, pane);
+  load();
+  state.dataTimer = setInterval(load, refresh * 1000);
+}
+
+function loadDataPane(session, pane) {
+  const url = pane.source && pane.source.startsWith("builtin:") ? null : resolveTargetUrl(pane);
+  if (!url) {
+    // builtin: render from the session summary we already have
+    renderDataTable([
+      { key: "session", value: session.name || session.id },
+      { key: "backend", value: session.backend },
+      { key: "runtime", value: session.runtime },
+      { key: "state", value: session.state },
+      { key: "activity", value: (session.activity && session.activity.label) || state.app?.active_session_activity?.label || "—" },
+    ]);
     return;
   }
+  fetch(url, { headers: { accept: "application/json" } })
+    .then(r => r.json())
+    .then(data => {
+      const rows = Array.isArray(data)
+        ? data.map((v, i) => ({ key: String(i), value: JSON.stringify(v) }))
+        : Object.entries(data).map(([k, v]) => ({ key: k, value: typeof v === "object" ? JSON.stringify(v) : String(v) }));
+      renderDataTable(rows);
+    })
+    .catch(err => renderDataTable([{ key: "error", value: String(err) }]));
+}
+
+function renderDataTable(rows) {
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th>field</th><th>value</th></tr></thead>";
+  const body = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${escapeHtml(row.key)}</td><td>${escapeHtml(row.value)}</td>`;
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+  els.dataPane.replaceChildren(table);
+}
+
+// ---- Sidebar links -------------------------------------------------------
+
+function renderLinks(links) {
+  if (!els.links) return;
+  els.links.replaceChildren(...links.map(link => {
+    const a = document.createElement("a");
+    a.className = "sidebar-link";
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = link.title;
+    a.href = resolveTargetUrl(link) || "#";
+    return a;
+  }));
+  els.links.classList.toggle("hidden", !links.length);
+}
+
+function openTerminalMode() {
+  // Attach the live terminal for the active session (split). Visibility (the
+  // pane bar, composer, fullscreen) is owned by render()/applyPanes.
+  if (!state.app?.active_session_id) return;
   closeTerminalSocket();
   state.lastSentTermSize = "";
   state.terminalMode = true;
-  state.terminalExclusive = Boolean(exclusive);
+  state.attachTargetSession = state.app.active_session_id || "";
   state.returnSessionId = state.app.active_session_id || "";
   resetRenderedOutputState();
   state.renderedLayoutKey = "";
-  document.body.classList.toggle("terminal-exclusive", state.terminalExclusive);
-  els.terminalModeBar.classList.remove("hidden");
-  els.composer.classList.toggle("hidden", state.terminalExclusive);
   if (!state.term) return;
   state.term.clear();
   state.term.write("Connecting to tmux...\r\n");
@@ -642,28 +890,6 @@ function closeTerminalSocket() {
     state.termTerminalId = "";
   }
   state.termSessionId = "";
-}
-
-function closeTerminalMode() {
-  const returnSessionId = state.returnSessionId || state.termSessionId || state.pendingTerminalOpen?.session_id || state.app?.active_session_id || "";
-  closeTerminalSocket();
-  state.lastSentTermSize = "";
-  state.terminalMode = false;
-  state.terminalExclusive = false;
-  state.pendingTerminalOpen = null;
-  state.retriedTerminalOpen = false;
-  state.returnSessionId = "";
-  resetRenderedOutputState();
-  state.renderedLayoutKey = "";
-  document.body.classList.remove("terminal-exclusive");
-  els.terminalModeBar.classList.add("hidden");
-  els.composer.classList.remove("hidden");
-  if (returnSessionId) {
-    send("session.switch", { session_id: returnSessionId });
-  } else {
-    send("state");
-  }
-  els.message.focus();
 }
 
 function renderSuggestions(items) {
@@ -800,7 +1026,14 @@ els.viewToggle.onclick = () => {
   const next = state.app?.output_view === "dev" ? "high" : "dev";
   submitText(`/view ${next}`);
 };
-els.termReturn.onclick = () => closeTerminalMode();
+els.termReturn.onclick = () => exitFullscreen();
+
+// Web pane navigation
+els.webBack.onclick = () => { const n = currentWebNav(); if (n) webGo(n.index - 1, { reload: true }); };
+els.webFwd.onclick = () => { const n = currentWebNav(); if (n) webGo(n.index + 1, { reload: true }); };
+els.webReload.onclick = () => webGo(undefined, { reload: true });
+els.webToggle.onclick = () => { const n = currentWebNav(); if (!n) return; n.loaded = !n.loaded; if (n.loaded) webGo(undefined, { reload: true }); else applyWebNav(); };
+els.webUrl.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); webNavigateTo(els.webUrl.value); } });
 els.tabs.addEventListener("contextmenu", openContextMenu);
 document.addEventListener("click", event => {
   if (!els.contextMenu.contains(event.target)) hideContextMenu();

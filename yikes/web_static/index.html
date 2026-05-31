@@ -13,6 +13,7 @@
         <div class="brand"><img src="/static/logo.png" alt="yikes!"></div>
         <dl id="status" class="status"></dl>
         <div id="activity-pill" class="activity-pill activity-unknown">unknown</div>
+        <nav id="links" class="links hidden"></nav>
       </aside>
 
       <main class="workspace">
@@ -20,6 +21,22 @@
           <div id="tabs" class="tabs"></div>
           <button id="view-toggle" class="icon-button" type="button" title="Toggle high-level/dev view">{} </button>
         </div>
+        <div id="pane-bar" class="pane-bar hidden"></div>
+        <section id="web-pane" class="web-pane hidden">
+          <div class="web-pane-nav">
+            <button id="web-back" type="button" title="Back">‹</button>
+            <button id="web-fwd" type="button" title="Forward">›</button>
+            <button id="web-reload" type="button" title="Reload">⟳</button>
+            <input id="web-url" autocomplete="off" spellcheck="false" placeholder="http://{host}:port">
+            <button id="web-toggle" type="button" title="Load / unload">⏻</button>
+            <a id="web-open" target="_blank" rel="noopener" title="Open in new tab">↗</a>
+          </div>
+          <div class="web-pane-body">
+            <div id="web-placeholder" class="web-placeholder hidden"></div>
+            <iframe id="web-frame" title="embedded page" referrerpolicy="no-referrer"></iframe>
+          </div>
+        </section>
+        <section id="data-pane" class="data-pane hidden"></section>
         <section id="no-session" class="empty hidden">
           <h1>No active session</h1>
           <p>Create a session to start chatting. Normal text input is disabled until one exists.</p>
