@@ -65,6 +65,21 @@ def test_activity_idle_prompt_with_keywords_is_not_thinking() -> None:
     assert activity.state == ACTIVITY_IDLE
 
 
+def test_activity_working_with_menu_shaped_text_is_thinking_not_selection() -> None:
+    # Mid-run output can contain numbered/"confirm" text; the active "esc to
+    # interrupt" indicator must win over the selection-prompt heuristic.
+    snapshot = """
+=== rest of test_p2p_webrtc_integration.py (from line 80) ===
+- The 'host' sample — confirm this means the server/proxy path
+Musing… (3m 20s · ↓ 12.8k tokens)
+  auto mode on (shift+tab to cycle) · esc to interrupt
+"""
+
+    activity = classify_terminal_snapshot(snapshot, now=1.0)
+
+    assert activity.state == ACTIVITY_THINKING
+
+
 def test_activity_monitor_detects_streaming_when_terminal_changes() -> None:
     monitor = ActivityMonitor()
 

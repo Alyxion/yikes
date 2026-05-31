@@ -88,6 +88,11 @@ def classify_terminal_snapshot(snapshot: str, *, now: float | None = None) -> Te
     normalized = _normalize(snapshot)
     if not normalized.strip():
         return TerminalActivity(UNKNOWN, "unknown", 0.0, "no terminal snapshot", updated_at=current_time)
+    # An active run ("esc to interrupt") means the agent is working, not waiting
+    # for a choice — check it first so a menu-shaped snapshot mid-turn isn't
+    # misread as a selection prompt.
+    if _looks_like_thinking(normalized):
+        return TerminalActivity(THINKING, "thinking", 0.78, "working indicator visible", updated_at=current_time)
     if _looks_like_selection_prompt(normalized):
         return TerminalActivity(
             AWAITING_SELECTION,
@@ -96,8 +101,6 @@ def classify_terminal_snapshot(snapshot: str, *, now: float | None = None) -> Te
             "numbered choices or approval prompt visible",
             updated_at=current_time,
         )
-    if _looks_like_thinking(normalized):
-        return TerminalActivity(THINKING, "thinking", 0.78, "working indicator visible", updated_at=current_time)
     return TerminalActivity(IDLE, "idle", 0.50, "no active indicator visible", updated_at=current_time)
 
 
@@ -108,24 +111,21 @@ def _normalize(text: str) -> str:
 
 def _looks_like_selection_prompt(text: str) -> bool:
     lower = text.lower()
-    choice_count = len(re.findall(r"(?m)^\s*(?:[›>•*-]\s*)?\d+[\.\)]\s+\S+", text))
-    has_selection_words = any(
-        phrase in lower
-        for phrase in (
-            "do you trust",
-            "do you want",
-            "allow",
-            "approve",
-            "confirm",
-            "choose",
-            "select",
-            "press enter to continue",
-            "yes, continue",
-            "no, quit",
-            "chat about this",
-        )
+    # Real menu choices: a single small number at the very start of a line (with
+    # an optional cursor marker) — not "(from line 80)" buried in prose/code.
+    choice_count = len(re.findall(r"(?m)^\s*(?:[›>❯•]\s*)?[1-9][.)]\s+\S", text))
+    strong_phrases = (
+        "do you trust",
+        "do you want",
+        "press enter to continue",
+        "yes, continue",
+        "no, quit",
+        "chat about this",
     )
-    return (choice_count >= 2 and has_selection_words) or "esc to interrupt" in lower and "approve" in lower
+    weak_phrases = ("allow", "approve", "deny", "choose", "select")
+    has_strong = any(phrase in lower for phrase in strong_phrases)
+    has_weak = any(phrase in lower for phrase in weak_phrases)
+    return has_strong or (choice_count >= 2 and (has_strong or has_weak))
 
 
 def _looks_like_thinking(text: str) -> bool:
