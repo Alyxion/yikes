@@ -223,7 +223,9 @@ function render(next) {
   const noSession = !next.has_active_session && !next.pending_new;
   els.noSession.classList.toggle("hidden", !noSession);
   els.terminalPanel.classList.toggle("hidden", noSession);
-  els.composer.classList.toggle("hidden", state.terminalExclusive || noSession);
+  // Hide the chat composer whenever a live terminal is attached — you type into
+  // the terminal itself, so the bottom bar is just confusing there.
+  els.composer.classList.toggle("hidden", state.terminalMode || noSession);
   els.composer.classList.toggle("disabled", noSession);
   els.message.disabled = noSession;
   els.terminalModeBar.classList.toggle("hidden", !state.terminalMode);
@@ -545,6 +547,7 @@ function openTerminalMode({ exclusive }) {
     return;
   }
   closeTerminalSocket();
+  state.lastSentTermSize = "";
   state.terminalMode = true;
   state.terminalExclusive = Boolean(exclusive);
   state.returnSessionId = state.app.active_session_id || "";
@@ -603,15 +606,30 @@ function sendTerminalData(data) {
 
 function resizeActiveTerminal() {
   if (!state.term || !state.terminalMode) return;
-  state.fit.fit();
-  const cols = state.term.cols;
-  const rows = state.term.rows;
-  if (state.termWs && state.termWs.readyState === WebSocket.OPEN) {
-    state.termWs.send(JSON.stringify({ type: "resize", cols, rows }));
-  }
-  if (state.termSessionId) {
-    send("term.resize", { session_id: state.termSessionId, cols, rows });
-  }
+  state.fit.fit(); // reflow xterm locally now; defer the (expensive) backend resize
+  queueTerminalResizeSend();
+}
+
+let _resizeSendTimer = null;
+function queueTerminalResizeSend() {
+  // Collapse the burst of staggered fits into a single resize sent once the
+  // layout has settled. Each resize sent to tmux makes the backend TUI repaint
+  // its whole screen, so sending intermediate sizes stacks duplicate frames.
+  if (_resizeSendTimer) clearTimeout(_resizeSendTimer);
+  _resizeSendTimer = setTimeout(() => {
+    if (!state.term || !state.terminalMode) return;
+    const cols = state.term.cols;
+    const rows = state.term.rows;
+    const size = `${cols}x${rows}`;
+    if (size === state.lastSentTermSize) return;
+    state.lastSentTermSize = size;
+    if (state.termWs && state.termWs.readyState === WebSocket.OPEN) {
+      state.termWs.send(JSON.stringify({ type: "resize", cols, rows }));
+    }
+    if (state.termSessionId) {
+      send("term.resize", { session_id: state.termSessionId, cols, rows });
+    }
+  }, 150);
 }
 
 function closeTerminalSocket() {
@@ -629,6 +647,7 @@ function closeTerminalSocket() {
 function closeTerminalMode() {
   const returnSessionId = state.returnSessionId || state.termSessionId || state.pendingTerminalOpen?.session_id || state.app?.active_session_id || "";
   closeTerminalSocket();
+  state.lastSentTermSize = "";
   state.terminalMode = false;
   state.terminalExclusive = false;
   state.pendingTerminalOpen = null;

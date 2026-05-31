@@ -129,12 +129,8 @@ def _looks_like_selection_prompt(text: str) -> bool:
 
 
 def _looks_like_thinking(text: str) -> bool:
+    # Only the backend's live "interrupt" hint reliably means a turn is running.
+    # Matching plain keywords (e.g. the idle reply "What are you working on?")
+    # produced false positives, so gate strictly on the interrupt indicator.
     lower_tail = "\n".join(line.lower() for line in text.splitlines()[-12:])
-    if "esc to interrupt" in lower_tail and any(word in lower_tail for word in ("working", "thinking", "running")):
-        return True
-    return bool(
-        re.search(
-            r"\b(working|thinking|running|processing|analyzing|generating|searching|reading)\b(?:\s*\(|[. …])",
-            lower_tail,
-        )
-    )
+    return "esc to interrupt" in lower_tail or "ctrl+c to interrupt" in lower_tail

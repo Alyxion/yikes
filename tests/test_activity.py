@@ -50,6 +50,21 @@ Working (3s • esc to interrupt)
     assert activity.label == "thinking"
 
 
+def test_activity_idle_prompt_with_keywords_is_not_thinking() -> None:
+    # An idle Claude prompt whose text merely contains words like "working"
+    # must not be mistaken for an active run.
+    snapshot = """
+> Yep, alive and ready.
+  What are you working on in experiments/dashboard? I can help with code.
+> what's in this dashboard project?
+  don't ask on (shift+tab to cycle) · ← for agents
+"""
+
+    activity = classify_terminal_snapshot(snapshot, now=1.0)
+
+    assert activity.state == ACTIVITY_IDLE
+
+
 def test_activity_monitor_detects_streaming_when_terminal_changes() -> None:
     monitor = ActivityMonitor()
 

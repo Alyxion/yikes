@@ -13,7 +13,7 @@ def test_web_layout_does_not_reserve_bottom_spacer_row() -> None:
 def test_web_hides_composer_when_no_session_is_active() -> None:
     js = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.js").read_text()
 
-    assert 'els.composer.classList.toggle("hidden", state.terminalExclusive || noSession);' in js
+    assert 'els.composer.classList.toggle("hidden", state.terminalMode || noSession);' in js
     assert "els.message.disabled = noSession;" in js
 
 
