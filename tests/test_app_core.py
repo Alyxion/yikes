@@ -337,6 +337,21 @@ def test_controller_output_prefers_live_tmux_snapshot(tmp_path: Path, monkeypatc
     assert controller.output_text() == "shared tmux pane"
 
 
+def test_panes_resolve_for_docker_session_from_cwd(tmp_path: Path) -> None:
+    from yikes.app_core import _panes_for
+    from yikes.session_inventory import SessionSummary
+
+    (tmp_path / "yikes.toml").write_text('[[panes]]\nkind = "web"\ntitle = "App"\nport = 5173\n')
+    # docker session: location is the container name, cwd is the host project dir
+    session = SessionSummary(
+        id="x", runtime="docker", backend="codex", state="running", location="yksb-abc", cwd=str(tmp_path)
+    )
+
+    titles = [pane["title"] for pane in _panes_for(session)]
+    assert "Terminal" in titles
+    assert "App" in titles
+
+
 def test_web_state_sessions_carry_intuitive_name(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "dashboard"
     project.mkdir()

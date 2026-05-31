@@ -28,6 +28,7 @@ class SessionSummary:
     location: str
     detail: str = ""
     name: str = ""
+    cwd: str = ""  # the host project directory (== location for host, user_data for docker)
 
 
 class SessionInventory:
@@ -91,6 +92,7 @@ class SessionInventory:
                     location=str(meta.cwd),
                     detail=_runtime_detail(meta.runtime),
                     name=_session_display_name(meta.user_data, meta.cwd),
+                    cwd=str(meta.cwd),
                 )
             )
         return rows
@@ -123,6 +125,7 @@ class SessionInventory:
                     location=session.container_name,
                     detail=f"{session.id} image={session.meta.config.image}",
                     name=_session_display_name(session.meta.user_data, Path(cwd) if cwd else None),
+                    cwd=str(cwd) if cwd else "",
                 )
             )
         return rows

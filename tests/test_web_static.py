@@ -20,6 +20,14 @@ def test_web_hides_composer_when_no_session_is_active() -> None:
     assert "els.message.disabled = noSession;" in js
 
 
+def test_web_prunes_iframes_for_closed_sessions() -> None:
+    js = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.js").read_text()
+
+    assert "function pruneWebFrames(next)" in js
+    assert "pruneWebFrames(next);" in js  # called from render()
+    assert "frame.parentNode.removeChild(frame)" in js
+
+
 def test_web_new_session_shows_immediate_creation_feedback() -> None:
     js = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.js").read_text()
 

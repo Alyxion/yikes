@@ -234,8 +234,28 @@ function handleMessage(message) {
   }
 }
 
+function pruneWebFrames(next) {
+  // Drop persistent iframes (and their nav state) for panes/sessions that no
+  // longer exist — otherwise closed sessions leak their iframes.
+  const valid = new Set();
+  for (const session of next.sessions || []) {
+    for (const pane of session.panes || []) {
+      if (pane.kind === "web") valid.add(`${session.id}:${pane.id}`);
+    }
+  }
+  for (const key of Object.keys(state.webFrames)) {
+    if (valid.has(key)) continue;
+    const frame = state.webFrames[key];
+    if (frame && frame.parentNode) frame.parentNode.removeChild(frame);
+    delete state.webFrames[key];
+    delete state.webNav[key];
+    if (state.activeWebKey === key) state.activeWebKey = "";
+  }
+}
+
 function render(next) {
   state.app = next;
+  pruneWebFrames(next);
   renderStatus(next.status, next.active_session_activity);
   renderTabs(next.sessions, next.active_session_id);
   renderViewToggle(next.output_view);

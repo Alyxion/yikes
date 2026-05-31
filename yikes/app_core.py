@@ -128,6 +128,7 @@ class YikesAppController:
                     location=str(options.cwd),
                     detail="pending first turn",
                     name=project_label(options.cwd),
+                    cwd=str(options.cwd),
                 ),
             )
         return sessions
@@ -643,8 +644,13 @@ def _session_config(session: SessionSummary | None):
     """Best-effort project config for a session (from its cwd), never raising."""
     if session is None:
         return None
+    # `location` is the container name for docker sessions; `cwd` is the real
+    # host project directory (where yikes.toml lives), so prefer it.
+    project_dir = session.cwd or session.location
+    if not project_dir:
+        return None
     try:
-        return load_project_config(Path(session.location))
+        return load_project_config(Path(project_dir))
     except Exception:
         return None  # a bad yikes.toml must not break the whole state payload
 
