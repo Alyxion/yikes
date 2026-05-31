@@ -20,6 +20,13 @@ def test_web_hides_composer_when_no_session_is_active() -> None:
     assert "els.message.disabled = noSession;" in js
 
 
+def test_web_url_field_not_clobbered_while_editing() -> None:
+    js = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.js").read_text()
+
+    assert "if (document.activeElement !== els.webUrl) els.webUrl.value = url;" in js
+    assert "function schemeFor(" in js  # public URLs default to https
+
+
 def test_web_prunes_iframes_for_closed_sessions() -> None:
     js = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.js").read_text()
 

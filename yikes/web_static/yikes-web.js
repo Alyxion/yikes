@@ -766,12 +766,25 @@ function currentWebNav() {
   return state.webNav[state.activeWebKey] || null;
 }
 
+function schemeFor(hostPart) {
+  const host = hostPart.split(":")[0].toLowerCase();
+  const isLocal =
+    host === "localhost" ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    !host.includes(".");
+  return isLocal ? "http" : "https"; // public hosts default to https
+}
+
 function applyWebNav() {
   const nav = currentWebNav();
   const frame = state.webFrames[state.activeWebKey];
   if (!nav || !frame) return;
   const url = nav.stack[nav.index] || "";
-  els.webUrl.value = url;
+  // Don't clobber the URL field while the user is editing it.
+  if (document.activeElement !== els.webUrl) els.webUrl.value = url;
   els.webOpen.href = url || "#";
   els.webBack.disabled = nav.index <= 0;
   els.webFwd.disabled = nav.index >= nav.stack.length - 1;
@@ -804,7 +817,7 @@ function webNavigateTo(rawUrl) {
   if (!nav || !frame) return;
   let url = rawUrl.trim();
   if (!url) return;
-  if (!/^[a-zA-Z][\w+.-]*:\/\//.test(url)) url = "http://" + url;
+  if (!/^[a-zA-Z][\w+.-]*:\/\//.test(url)) url = schemeFor(url.split("/")[0]) + "://" + url;
   nav.stack = nav.stack.slice(0, nav.index + 1);
   nav.stack.push(url);
   nav.index = nav.stack.length - 1;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 import time
 from contextlib import contextmanager
@@ -374,7 +375,7 @@ class YikesAppController:
             pane["port"] = int(value)
             pane["title"] = title or f"Port {value}"
         else:
-            url = value if "://" in value else f"http://{value}"
+            url = value if "://" in value else f"{_default_scheme(value)}://{value}"
             pane["url"] = url
             pane["title"] = title or url.split("://", 1)[-1]
         from .project_config import append_local_pane
@@ -638,6 +639,17 @@ class YikesAppController:
         if location is ExecutionLocation.DOCKER:
             return Driver.DOCKER
         return Driver.TMUX if mode is DriverMode.TMUX else Driver.DIRECT
+
+
+def _default_scheme(value: str) -> str:
+    """Public hosts default to https; localhost/LAN/dev hosts to http."""
+    host = value.split("/", 1)[0].split(":", 1)[0].lower()
+    local = (
+        host == "localhost"
+        or re.match(r"^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)", host) is not None
+        or "." not in host
+    )
+    return "http" if local else "https"
 
 
 def _session_config(session: SessionSummary | None):

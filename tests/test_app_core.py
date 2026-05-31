@@ -337,6 +337,17 @@ def test_controller_output_prefers_live_tmux_snapshot(tmp_path: Path, monkeypatc
     assert controller.output_text() == "shared tmux pane"
 
 
+def test_default_scheme_public_https_local_http() -> None:
+    from yikes.app_core import _default_scheme
+
+    assert _default_scheme("www.google.com") == "https"
+    assert _default_scheme("example.com:8443") == "https"
+    assert _default_scheme("localhost:5173") == "http"
+    assert _default_scheme("127.0.0.1:8080") == "http"
+    assert _default_scheme("192.168.1.5:9090") == "http"
+    assert _default_scheme("intranetbox") == "http"  # single-label host
+
+
 def test_panes_resolve_for_docker_session_from_cwd(tmp_path: Path) -> None:
     from yikes.app_core import _panes_for
     from yikes.session_inventory import SessionSummary
