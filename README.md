@@ -85,6 +85,8 @@ For local debugging, tmux I/O tracing is opt-in. Set `YIKES_DEVELOPER_MODE=1` or
 
 `yikes web` serves a login-key-gated web UI on all interfaces by default (key stored user-globally in `~/.yikes/web-auth.env`, login is rate-limited against brute force); `yikes web --url` prints the login URL so you can open it from another machine without copying the key. The server does not hot-reload, so restart it after updating yikes. See [the Web UI docs](docs/cli-wrapper.md#web-ui-yikes-web) for flags, remote access, and the restart workflow.
 
+In the web UI each session tab has **sub-tabs ("panes")**: the live terminal plus embedded web pages (the app the agent is building), health/status tables, and sidebar links — declared per project in `yikes.toml` `[[panes]]` (by port, never a hardcoded IP) or added at runtime with the **＋ web** button. Panes with a `start` command get a Start/Stop control. See [Session panes](docs/cli-wrapper.md#session-panes-sub-tabs).
+
 MCP SSE proxies are started only for enabled MCP servers that need proxying, such as a host stdio MCP attached to a Docker session. Each proxy uses an unguessable per-process token in its SSE and message URLs. Docker sessions may copy local Codex or Claude credentials into their managed workspace so the native CLI can run inside the container; close sessions and remove their Docker volumes when those credentials should disappear.
 
 ---

@@ -113,6 +113,38 @@ ports    = [8080, 5173]    # published 127.0.0.1:PORT -> container when isolated
 
 `ports` entries accept a bare port (`8080`) or a `"host:container"` string. A sibling `yikes.local.toml` (gitignored) overlays personal overrides on top of the shared file — use it for your own ports or backend without touching the committed config. CLI flags (`-i`, `-p`, `-n`, `--model`) override the file for a single run.
 
+### Session panes (sub-tabs)
+
+In the web UI each session tab has **sub-tabs ("panes")**: the live **Terminal** (always present for interactive sessions) plus panes you declare under `[[panes]]`, and an optional `[[links]]` list rendered in the sidebar.
+
+```toml
+[[panes]]
+kind  = "web"            # an embedded page (iframe)
+title = "App"
+port  = 5173             # -> http://<browser-host>:5173
+# url = "http://{host}:{port}/admin"   # alternative: a template; {host}/{port} only
+
+[[panes]]
+kind  = "web"
+title = "Storybook"
+port  = 6006
+start = "npm run storybook"   # optional: yikes runs/stops this as a tracked process
+
+[[panes]]
+kind    = "data"         # an auto-refreshing table
+title   = "Health"
+source  = "builtin:health"     # or: url = "http://{host}:8080/health" returning JSON
+refresh = 5
+
+[[links]]
+title = "Open app"
+port  = 5173
+```
+
+- **No hardcoded hosts/IPs in `yikes.toml`.** Declare a `port` (or a `url` template using only the `{host}`/`{port}` placeholders); the host is resolved in the browser from the address you used to reach yikes, so the committed file works from localhost, a LAN IP, or a VPN name. A literal host in a committed `url` is rejected — literal addresses are allowed only in the gitignored `yikes.local.toml`.
+- **Web panes** show a small browser bar (URL, back/forward, reload, open-in-new-tab, and a load/unload toggle to stop hitting the server). A pane with a `start` command gets a **Start/Stop** control and a live status dot; without one, yikes just embeds the URL.
+- **Add panes at runtime** with the **＋ web** button in the pane bar — type a port or full URL. Dynamic panes persist to `yikes.local.toml` (so a literal intranet URL stays personal and gitignored), never the shared file.
+
 ## Top-level shape
 
 ```

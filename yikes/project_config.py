@@ -126,6 +126,13 @@ def starter_toml() -> str:
         "# ports    = [8080, 5173]  # published 127.0.0.1:PORT -> container when isolated\n"
         '# name     = "shop"        # session name (default: directory basename)\n'
         '# model    = ""            # backend model override\n'
+        "\n"
+        "# Web UI sub-tabs (panes). Use a port or {host}/{port} — never a literal IP.\n"
+        "# [[panes]]\n"
+        '# kind  = "web"\n'
+        '# title = "App"\n'
+        "# port  = 5173\n"
+        "# start = \"npm run dev\"   # optional: yikes runs/stops this process\n"
     )
 
 
