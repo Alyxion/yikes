@@ -274,12 +274,16 @@ button:hover {
   color: var(--text);
 }
 .web-pane-body { position: relative; flex: 1; min-height: 0; }
-.web-pane-body iframe {
+.web-frames { position: absolute; inset: 0; }
+.web-frames iframe {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   border: 0;
   background: #fff;
 }
+.web-frames iframe.hidden { display: none; }
 .web-placeholder {
   position: absolute;
   inset: 0;

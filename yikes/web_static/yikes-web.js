@@ -27,6 +27,7 @@ const state = {
   lastSentTermSize: "",
   activePaneBySession: {},   // sessionId -> paneId
   webNav: {},                // paneKey -> { stack: [url], index, loaded }
+  webFrames: {},             // paneKey -> persistent <iframe> (never reloaded on switch)
   activeWebKey: "",
   renderedPaneBarKey: "",
   dataTimer: null,
@@ -44,7 +45,7 @@ const els = {
   terminalPanel: document.getElementById("terminal-panel"),
   paneBar: document.getElementById("pane-bar"),
   webPane: document.getElementById("web-pane"),
-  webFrame: document.getElementById("web-frame"),
+  webFrames: document.getElementById("web-frames"),
   webUrl: document.getElementById("web-url"),
   webBack: document.getElementById("web-back"),
   webFwd: document.getElementById("web-fwd"),
@@ -711,13 +712,32 @@ function resolveTargetUrl(spec) {
   return "";
 }
 
+// Each web pane keeps its OWN iframe, created once and only hidden when another
+// pane is active — so switching panes never reloads the page or loses its state.
+function webFrameFor(key, initialUrl) {
+  let frame = state.webFrames[key];
+  if (!frame) {
+    frame = document.createElement("iframe");
+    frame.title = "embedded page";
+    frame.setAttribute("referrerpolicy", "no-referrer");
+    if (initialUrl) frame.src = initialUrl;
+    els.webFrames.appendChild(frame);
+    state.webFrames[key] = frame;
+  }
+  return frame;
+}
+
 function showWebPane(session, pane) {
   const key = `${session.id}:${pane.id}`;
-  if (state.activeWebKey === key && state.webNav[key]) return;
-  state.activeWebKey = key;
   if (!state.webNav[key]) {
     const url = resolveTargetUrl(pane);
     state.webNav[key] = { stack: url ? [url] : [], index: url ? 0 : -1, loaded: true };
+    webFrameFor(key, url);
+  }
+  state.activeWebKey = key;
+  // Show only this pane's iframe.
+  for (const [frameKey, frame] of Object.entries(state.webFrames)) {
+    frame.classList.toggle("hidden", frameKey !== key);
   }
   applyWebNav();
 }
@@ -728,7 +748,8 @@ function currentWebNav() {
 
 function applyWebNav() {
   const nav = currentWebNav();
-  if (!nav) return;
+  const frame = state.webFrames[state.activeWebKey];
+  if (!nav || !frame) return;
   const url = nav.stack[nav.index] || "";
   els.webUrl.value = url;
   els.webOpen.href = url || "#";
@@ -738,30 +759,29 @@ function applyWebNav() {
   els.webToggle.title = nav.loaded ? "Unload (stop loading the page)" : "Load the page";
   els.webPlaceholder.classList.toggle("hidden", nav.loaded);
   if (nav.loaded) {
-    if (url && els.webFrame.getAttribute("src") !== url) els.webFrame.src = url;
+    frame.classList.remove("hidden");
   } else {
     els.webPlaceholder.textContent = "Page unloaded — click ▶ to load it.";
-    els.webFrame.removeAttribute("src");
+    frame.classList.add("hidden");
+    if (frame.getAttribute("src")) frame.removeAttribute("src");
   }
 }
 
 function webGo(index, { reload } = {}) {
   const nav = currentWebNav();
-  if (!nav) return;
+  const frame = state.webFrames[state.activeWebKey];
+  if (!nav || !frame) return;
   if (index !== undefined) nav.index = Math.max(0, Math.min(index, nav.stack.length - 1));
   nav.loaded = true;
   const url = nav.stack[nav.index] || "";
-  if (reload && url) els.webFrame.src = url;            // force a fresh load
+  if (url) frame.src = url; // back/forward/reload explicitly (re)load
   applyWebNav();
-  if (reload && url && els.webFrame.getAttribute("src") === url) {
-    // ensure reload even when src is unchanged
-    els.webFrame.contentWindow && (els.webFrame.src = url);
-  }
 }
 
 function webNavigateTo(rawUrl) {
   const nav = currentWebNav();
-  if (!nav) return;
+  const frame = state.webFrames[state.activeWebKey];
+  if (!nav || !frame) return;
   let url = rawUrl.trim();
   if (!url) return;
   if (!/^[a-zA-Z][\w+.-]*:\/\//.test(url)) url = "http://" + url;
@@ -769,7 +789,7 @@ function webNavigateTo(rawUrl) {
   nav.stack.push(url);
   nav.index = nav.stack.length - 1;
   nav.loaded = true;
-  els.webFrame.src = url;
+  frame.src = url;
   applyWebNav();
 }
 
