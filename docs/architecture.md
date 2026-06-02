@@ -4,77 +4,7 @@ A layered design where the **engine/session manager** owns durable state and pol
 
 ## Big picture
 
-```mermaid
-flowchart TB
-    subgraph faces[Public faces]
-        cli["CLI<br/>(Typer / argparse)"]
-        tui["Terminal UI<br/>(Textual)"]
-        pylib["Python library<br/>yikes.Session"]
-        web["Web backend<br/>HTTP / WebSocket"]
-        oh["OpenHort"]
-    end
-
-    subgraph engine[Engine]
-        ses[Session manager]
-        evbus[Event bus]
-        tx[Transcript store]
-        snap[Snapshot service]
-        emul[VT emulator<br/>pyte]
-    end
-
-    subgraph adapters[Backend adapters]
-        ca[claude adapter]
-        coa[codex adapter]
-    end
-
-    subgraph drivers[Drivers]
-        dtmux[tmux driver]
-        ddirect[direct subprocess driver]
-        dremote[remote server driver]
-    end
-
-    subgraph proc[Processes]
-        ptmux[(tmux server<br/>dedicated socket)]
-        pdirect[(claude / codex<br/>subprocess)]
-        premote[(yikes! server<br/>HTTP / WebSocket)]
-    end
-
-    cli --> ses
-    tui --> ses
-    pylib --> ses
-    web --> ses
-    oh --> ses
-    ses --> ca
-    ses --> coa
-    ca --> dtmux
-    ca --> ddirect
-    ca --> dremote
-    coa --> dtmux
-    coa --> ddirect
-    coa --> dremote
-    dtmux <--> ptmux
-    ddirect <--> pdirect
-    dremote <--> premote
-
-    dtmux -->|raw bytes| emul
-    ddirect -->|stream-json / JSON-RPC| evbus
-    dremote -->|native remote events / status| evbus
-    emul --> evbus
-    evbus --> tx
-    evbus --> snap
-    snap --> faces
-
-    classDef face fill:#eef,stroke:#669
-    classDef eng fill:#fec,stroke:#a83
-    classDef adap fill:#fef,stroke:#969
-    classDef drv fill:#efe,stroke:#696
-    classDef pr fill:#fee,stroke:#966
-    class cli,tui,pylib,web,oh face
-    class ses,evbus,tx,snap,emul eng
-    class ca,coa adap
-    class dtmux,ddirect,dremote drv
-    class ptmux,pdirect,premote pr
-```
+<p align="center"><img src="diagrams/architecture-1.svg" alt="architecture diagram 1" style="max-width:100%;height:auto"></p>
 
 ## Layers
 
@@ -139,114 +69,19 @@ The current code still has a `remote-control` enum value as an integration-test 
 
 ## Data flow — `tmux` driver
 
-```mermaid
-sequenceDiagram
-    actor caller
-    participant lib as yikes.Session
-    participant eng as Engine
-    participant adp as Adapter (claude/codex)
-    participant drv as tmux driver
-    participant tmux as tmux server (socket)
-    participant ai as claude/codex TUI
-
-    caller->>lib: prompt("write a function")
-    lib->>eng: send_user_text(...)
-    eng->>adp: translate to keystrokes
-    adp->>drv: send_text("write a function", bracketed_paste=True)
-    drv->>tmux: load-buffer + paste-buffer -p
-    drv->>tmux: send-keys Enter
-    tmux->>ai: bytes via PTY
-    loop streaming
-        ai->>tmux: output bytes (text, ANSI, redraws)
-        tmux-->>drv: control-mode %output events
-        drv-->>eng: raw bytes
-        eng->>eng: feed pyte, diff dirty lines
-        eng-->>lib: StreamDelta / LineRevised / TurnComplete
-    end
-    lib-->>caller: async for event in s.events()
-```
+<p align="center"><img src="diagrams/architecture-2.svg" alt="architecture diagram 2" style="max-width:100%;height:auto"></p>
 
 ## Data flow — `direct` driver, Claude headless
 
-```mermaid
-sequenceDiagram
-    actor caller
-    participant lib as yikes.Session
-    participant eng as Engine
-    participant adp as claude adapter
-    participant drv as direct driver
-    participant claude as claude -p --output-format stream-json
-
-    caller->>lib: prompt("write a function")
-    lib->>eng: send_user_text(...)
-    eng->>adp: build argv: ["claude", "-p", "...", "--output-format", "stream-json", "--verbose"]
-    adp->>drv: start(argv)
-    drv->>claude: spawn
-    loop streaming
-        claude-->>drv: NDJSON line
-        drv-->>adp: bytes
-        adp->>adp: parse event (content_block_delta, tool_use, result, ...)
-        adp-->>eng: normalised event
-        eng-->>lib: StreamDelta / ToolUse / TurnComplete
-    end
-    lib-->>caller: async for event in s.events()
-```
+<p align="center"><img src="diagrams/architecture-3.svg" alt="architecture diagram 3" style="max-width:100%;height:auto"></p>
 
 ## Data flow — `direct` driver, Codex app-server
 
-```mermaid
-sequenceDiagram
-    actor caller
-    participant lib as yikes.Session
-    participant eng as Engine
-    participant adp as codex adapter
-    participant drv as direct driver
-    participant cax as codex app-server (stdio)
-
-    caller->>lib: open()
-    lib->>eng: ensure_session()
-    eng->>adp: ensure app-server running
-    adp->>drv: start(["codex", "app-server", "--listen", "stdio://"])
-    adp->>drv: send_bytes(initialize JSON-RPC)
-    adp->>drv: send_bytes(thread/start)
-
-    caller->>lib: prompt(...)
-    lib->>eng: send_user_text(...)
-    adp->>drv: send_bytes(turn/start JSON-RPC)
-    loop streaming
-        cax-->>drv: notification: item/agentMessage/delta
-        drv-->>adp: bytes
-        adp->>adp: parse JSON-RPC notification
-        adp-->>eng: StreamDelta(text)
-        cax-->>drv: notification: turn/completed
-        adp-->>eng: TurnComplete(usage=...)
-    end
-```
+<p align="center"><img src="diagrams/architecture-4.svg" alt="architecture diagram 4" style="max-width:100%;height:auto"></p>
 
 ## Data flow — remote server attach
 
-```mermaid
-sequenceDiagram
-    actor caller
-    participant lib as yikes.Session
-    participant eng as Engine
-    participant adp as Adapter
-    participant drv as remote-server driver
-    participant srv as yikes! server
-
-    caller->>lib: attach(remote_url, bearer_token)
-    lib->>eng: create remote client session
-    eng->>drv: connect to yikes! server
-    drv->>srv: HTTPS/WebSocket + scoped bearer token
-    srv-->>drv: session metadata + event replay
-    caller->>lib: prompt(...)
-    lib->>eng: send user turn
-    drv->>srv: turn/start
-    srv->>adp: route to Claude or Codex runtime
-    adp-->>srv: normalized events
-    srv-->>drv: live event stream
-    drv-->>eng: StreamDelta / ToolUse / TurnComplete
-```
+<p align="center"><img src="diagrams/architecture-5.svg" alt="architecture diagram 5" style="max-width:100%;height:auto"></p>
 
 Remote server attach is not tmux over SSH and not Claude Remote Control. It is a yikes!-owned control plane. The remote host runs yikes!, owns the backend process and policy, and clients attach through authenticated HTTP/WebSocket APIs.
 
@@ -354,26 +189,7 @@ Cancellation propagates structurally. A single `asyncio.timeout` wraps "wait for
 
 A first-class design requirement: **the user picks provider (Claude/Codex) and mode (interactive/streaming/headless); everything else is automated.** That includes the verbs that manage a session's lifetime — and they look identical for both backends.
 
-```mermaid
-flowchart LR
-    spawn["spawn"] --> ready["READY"]
-    ready --> stream["STREAMING"]
-    stream --> ready
-    stream --> approval["APPROVAL_WAIT"]
-    approval --> stream
-    ready --> paused["PAUSED"]
-    paused --> ready
-    ready --> dead["DEAD"]
-    stream --> dead
-    paused --> dead
-
-    classDef live fill:#efe,stroke:#393
-    classDef wait fill:#ffd,stroke:#993
-    classDef end1 fill:#fee,stroke:#933
-    class ready,stream live
-    class approval,paused wait
-    class dead end1
-```
+<p align="center"><img src="diagrams/architecture-6.svg" alt="architecture diagram 6" style="max-width:100%;height:auto"></p>
 
 The verbs:
 
@@ -391,17 +207,7 @@ The point: **the user's mental model is `yikes`, not `tmux`.** They never need t
 
 The terminal UI follows the same model: session navigation is shown as tabs at the top of the app, and the sidebar stays limited to compact status plus session actions. Backend, location, driver, model, complexity, web, MCP, and directory policy changes go through the shared slash-command registry so the Textual UI, Python library, and future web client all ask the same source for valid commands and completions.
 
-```mermaid
-flowchart TB
-    user["yikes ps"] --> mgr[Manager.list]
-    mgr --> tdrv[tmux driver: list-sessions]
-    mgr --> ddrv["direct driver: state in ~/.yikes/"]
-    mgr --> rdrv["remote-server driver: endpoint state + ~/.yikes/"]
-    tdrv --> merge[merge + sort]
-    ddrv --> merge
-    rdrv --> merge
-    merge --> table["one table, both backends"]
-```
+<p align="center"><img src="diagrams/architecture-7.svg" alt="architecture diagram 7" style="max-width:100%;height:auto"></p>
 
 Internally:
 

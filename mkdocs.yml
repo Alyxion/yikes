@@ -39,9 +39,7 @@ extra_css:
   - stylesheets/extra.css
 
 extra_javascript:
-  - https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js
-  - javascripts/mermaid-init.js
-  - javascripts/mermaid-lightbox.js
+  - javascripts/diagram-lightbox.js
 
 markdown_extensions:
   - abbr
@@ -67,11 +65,7 @@ markdown_extensions:
   - pymdownx.mark
   - pymdownx.smartsymbols
   - pymdownx.snippets
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:

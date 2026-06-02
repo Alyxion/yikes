@@ -10,27 +10,7 @@ The key idea is simple: choose **where** the agent runs (`host`, `docker`, remot
 
 yikes! is designed as one runtime with multiple faces:
 
-```mermaid
-flowchart LR
-    user([User / Script]) --> cli["yikes CLI<br/>(thin wrapper)"]
-    user2([Python program]) --> lib["yikes Python library<br/>Session object"]
-    user3([Web app / OpenHort]) --> web["HTTP/WebSocket client"]
-    cli --> engine[yikes engine]
-    lib --> engine
-    web --> engine
-    engine --> drv_tmux[tmux transport]
-    engine --> drv_direct[direct subprocess driver]
-    engine --> drv_remote[remote-server driver]
-    drv_tmux --> ai_tmux[("claude / codex<br/>interactive TUI in tmux")]
-    drv_direct --> ai_direct[("claude -p --output-format stream-json<br/>codex app-server / codex exec --json")]
-    drv_remote --> ai_remote[("remote yikes! server<br/>Claude/Codex session")]
-    classDef face fill:#eef,stroke:#669
-    classDef driver fill:#efe,stroke:#696
-    classDef agent fill:#fee,stroke:#966
-    class cli,lib,web face
-    class drv_tmux,drv_direct,drv_remote driver
-    class ai_tmux,ai_direct,ai_remote agent
-```
+<p align="center"><img src="diagrams/index-1.svg" alt="index diagram 1" style="max-width:100%;height:auto"></p>
 
 1. **Terminal app** — `yikes` opens a full-screen control surface by default.
 2. **Python library** — Python code can create sessions, send prompts, inspect status, and use the same command registry as the UI.
@@ -48,36 +28,7 @@ The UI keeps session navigation visible and moves rarely changed configuration i
 
 The active implementation maps those controls onto the current runtime slots: host+cli, host+tmux, docker+cli, and docker+tmux. Remote access is handled by a yikes!-owned server/control plane rather than Claude Remote Control.
 
-```mermaid
-flowchart TB
-    user[User / Python / Web] --> backend{Backend}
-    backend --> claude[Claude Code]
-    backend --> codex[Codex CLI]
-
-    claude --> location{Location}
-    codex --> location
-
-    location -->|host| host[Host machine]
-    location -->|docker| docker[Docker sandbox]
-    location -->|remote| remote[Remote machine / yikes! server<br/>future]
-
-    host --> host_driver{Driver}
-    docker --> docker_driver{Driver}
-    remote --> remote_driver{Driver}
-
-    host_driver -->|cli| host_cli[Headless CLI/protocol path]
-    host_driver -->|tmux| host_tmux[Interactive TUI in host tmux]
-    host_driver -->|api| host_api[Structured API<br/>future]
-
-    docker_driver -->|cli| docker_cli[Headless CLI/protocol inside container]
-    docker_driver -->|tmux| docker_tmux[Interactive TUI in tmux inside container]
-    docker_driver -->|api| docker_api[Structured API inside container<br/>future]
-
-    remote_driver -->|api| remote_api[yikes! remote API<br/>future]
-
-    host_tmux -. forbidden .- bad1["claude -p / codex exec"]
-    docker_tmux -. forbidden .- bad2["claude -p / codex exec"]
-```
+<p align="center"><img src="diagrams/index-2.svg" alt="index diagram 2" style="max-width:100%;height:auto"></p>
 
 ---
 

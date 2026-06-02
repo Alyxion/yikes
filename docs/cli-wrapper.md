@@ -172,30 +172,7 @@ Global options:
 
 ## Two ways to read the surface
 
-```mermaid
-flowchart LR
-    subgraph one[User-facing: provider + location + driver]
-        prompt[yikes run]
-        interactive[yikes shell]
-        remote[yikes remote]
-        oneshot[yikes ask]
-    end
-    subgraph two[Session ops: uniform across backends]
-        spawn[yikes spawn]
-        list[yikes ps]
-        kill[yikes kill]
-        killall[yikes killall]
-        attach[yikes attach]
-        logs[yikes logs]
-    end
-    subgraph three[Passthrough: native flags]
-        prox[yikes claude ...]
-        prox2[yikes codex ...]
-    end
-    one --> engine[yikes engine]
-    two --> engine
-    three --> engine
-```
+<p align="center"><img src="diagrams/cli-wrapper-1.svg" alt="cli wrapper diagram 1" style="max-width:100%;height:auto"></p>
 
 ## Commands
 

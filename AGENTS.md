@@ -64,6 +64,24 @@ When `YIKES_DEVELOPER_MODE=1` or `YIKES_TMUX_IO_LOG=1` is set, every tmux
 paste, key, resize, and capture boundary should be logged through the bounded
 JSONL ring buffer in `yikes.tmux_io_log`; do not create ad-hoc debug files.
 
+## Diagrams & Media Assets
+
+Always use **SVG** for diagrams and generated graphics, never PNG. SVG is a
+fraction of the size, stays crisp at any zoom, and `raw.githubusercontent.com`
+serves `.svg` as `image/svg+xml`, so it renders in `<img>` tags on both GitHub
+and PyPI (unlike Mermaid, which PyPI does not render at all).
+
+Required:
+
+- Author diagrams in Excalidraw and keep the editable `.excalidraw` source in
+  `media/` next to the exported `.svg` (e.g. `media/runtime-architecture.excalidraw`
+  + `media/runtime-architecture.svg`). Embed the SVG via a raw GitHub `<img>`.
+- Keep exported SVGs self-contained: render text with a system font stack
+  (no external `@font-face`) so nothing has to be fetched at view time. The
+  hand-drawn box/arrow strokes are vector paths and stay regardless of font.
+- Do not commit PNG diagrams. (Raster brand assets like the logo are exempt
+  only because they have no vector source.)
+
 ## Web UI Dialogs
 
 When building yikes! as a llming-stage web app, dialogs and confirmations must

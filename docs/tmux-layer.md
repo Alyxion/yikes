@@ -6,24 +6,7 @@ tmux is a transport, not a replacement for the runtime. A local `driver=tmux` se
 
 The tmux transport must never use headless commands. In tmux, Claude starts as `claude ...`; Codex starts as `codex --no-alt-screen ...`. `claude -p`, `codex exec`, and other one-shot paths belong only to the `direct` runtime.
 
-```mermaid
-flowchart LR
-    subgraph host[Location: host]
-        hcli["Driver: cli<br/>headless direct path"]
-        htmux["Driver: tmux<br/>real interactive TUI<br/>inside host tmux"]
-    end
-
-    subgraph docker[Location: docker]
-        dcli["Driver: cli<br/>headless direct path<br/>inside container"]
-        dtmux["Driver: tmux<br/>real interactive TUI<br/>inside container tmux"]
-    end
-
-    htmux --> hatt["yikes attach<br/>tmux attach"]
-    dtmux --> datt["yikes attach<br/>docker exec -it ... tmux attach"]
-
-    bad["claude -p / codex exec"] -. "forbidden for tmux" .- htmux
-    bad -. "forbidden for tmux" .- dtmux
-```
+<p align="center"><img src="diagrams/tmux-layer-1.svg" alt="tmux layer diagram 1" style="max-width:100%;height:auto"></p>
 
 ## Design principles
 
@@ -35,34 +18,7 @@ flowchart LR
 
 ## Topology
 
-```mermaid
-flowchart TB
-    subgraph yikes[yikes process]
-        engine[Engine]
-        ctl_a["TmuxControl A<br/>(-C attach -t $0)"]
-        ctl_b["TmuxControl B<br/>(-C attach -t $1)"]
-        libtmux["libtmux<br/>(commands)"]
-        pyte_a[pyte Screen A]
-        pyte_b[pyte Screen B]
-    end
-    subgraph tmuxserver[tmux server / dedicated socket]
-        s1["session $0<br/>pane %0: claude"]
-        s2["session $1<br/>pane %1: codex"]
-    end
-
-    engine --> libtmux
-    engine --> ctl_a
-    engine --> ctl_b
-    libtmux -->|send-keys, paste-buffer,<br/>capture-pane, new-session| tmuxserver
-    ctl_a <-->|%output, %window-*, ...| tmuxserver
-    ctl_b <-->|%output, %window-*, ...| tmuxserver
-    s1 -. bytes .-> ctl_a
-    s2 -. bytes .-> ctl_b
-    ctl_a --> pyte_a
-    ctl_b --> pyte_b
-    pyte_a --> engine
-    pyte_b --> engine
-```
+<p align="center"><img src="diagrams/tmux-layer-2.svg" alt="tmux layer diagram 2" style="max-width:100%;height:auto"></p>
 
 - One dedicated tmux server owns all managed sessions.
 - One `tmux -C attach -t <session-id>` subprocess is opened per pane/session that needs live streaming. A single control client does **not** multiplex output from inactive sessions; it only emits `%output` for the session it is currently attached to.
@@ -117,22 +73,7 @@ The fullscreen escape intentionally avoids double-Escape. Escape is not a safe g
 
 ## Lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> Spawning: spawn()
-    Spawning --> Starting: new-session created
-    Starting --> Ready: prompt sentinel detected
-    Ready --> Streaming: user sends prompt
-    Streaming --> Ready: turn complete
-    Streaming --> ApprovalWait: approval prompt detected
-    ApprovalWait --> Streaming: approve/deny
-    Ready --> Pausing: pause()
-    Pausing --> Paused
-    Paused --> Ready: resume()
-    Ready --> Killing: kill()
-    Streaming --> Killing: kill()
-    Killing --> [*]: kill-session
-```
+<p align="center"><img src="diagrams/tmux-layer-3.svg" alt="tmux layer diagram 3" style="max-width:100%;height:auto"></p>
 
 Every state transition emits an engine event so callers can observe lifecycle.
 

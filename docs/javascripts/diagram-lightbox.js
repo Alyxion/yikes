@@ -1,4 +1,6 @@
 (function () {
+  // Click-to-zoom for the static diagram images (Excalidraw / mermaid-rendered
+  // SVGs under docs/diagrams/). Reuses the .yikes-mermaid-lightbox styles.
   function ensureLightbox() {
     let lightbox = document.querySelector(".yikes-mermaid-lightbox");
     if (lightbox) return lightbox;
@@ -36,35 +38,40 @@
     document.documentElement.style.overflow = "";
   }
 
-  function openLightbox(block) {
-    const svg = block.matches("svg") ? block : block.querySelector("svg");
-    if (!svg) return;
+  function openLightbox(img) {
     const lightbox = ensureLightbox();
     const content = lightbox.querySelector(".yikes-mermaid-lightbox__content");
     if (!content) return;
 
-    const clone = svg.cloneNode(true);
-    clone.removeAttribute("style");
+    const clone = document.createElement("img");
+    clone.src = img.currentSrc || img.src;
+    clone.alt = img.alt || "";
+    clone.style.maxWidth = "none";
     content.replaceChildren(clone);
     setScale(lightbox, 1);
     lightbox.setAttribute("aria-hidden", "false");
     document.documentElement.style.overflow = "hidden";
   }
 
-  function attachMermaidHandlers(root) {
-    root.querySelectorAll(".mermaid").forEach(function (block) {
-      if (block.dataset.yikesLightbox === "1") return;
-      block.dataset.yikesLightbox = "1";
-      block.setAttribute("role", "button");
-      block.setAttribute("tabindex", "0");
-      block.setAttribute("aria-label", "Open Mermaid diagram in larger view");
-      block.addEventListener("click", function () {
-        openLightbox(block);
+  function isDiagram(img) {
+    return /(^|\/)diagrams\//.test(img.getAttribute("src") || "");
+  }
+
+  function attachHandlers(root) {
+    root.querySelectorAll(".md-content img, article img").forEach(function (img) {
+      if (img.dataset.yikesLightbox === "1" || !isDiagram(img)) return;
+      img.dataset.yikesLightbox = "1";
+      img.style.cursor = "zoom-in";
+      img.setAttribute("role", "button");
+      img.setAttribute("tabindex", "0");
+      img.setAttribute("aria-label", "Open diagram in larger view");
+      img.addEventListener("click", function () {
+        openLightbox(img);
       });
-      block.addEventListener("keydown", function (event) {
+      img.addEventListener("keydown", function (event) {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          openLightbox(block);
+          openLightbox(img);
         }
       });
     });
@@ -101,13 +108,13 @@
     if (observerStarted || !document.body) return;
     observerStarted = true;
     const observer = new MutationObserver(function () {
-      attachMermaidHandlers(document);
+      attachHandlers(document);
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
   function initLightbox() {
-    attachMermaidHandlers(document);
+    attachHandlers(document);
     startObserver();
   }
 

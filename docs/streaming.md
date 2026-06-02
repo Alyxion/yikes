@@ -17,16 +17,7 @@ Claude Code's `--output-format stream-json` solves this for itself — it emits 
 
 ## Pipeline (tmux driver)
 
-```mermaid
-flowchart LR
-    pty[("PTY bytes<br/>from tmux %output")] --> dec[octal decoder]
-    dec --> emul[pyte.ByteStream → Screen]
-    emul -- "dirty lines" --> differ[line differ]
-    emul -- "cursor moves" --> tracker[block tracker]
-    differ -- "line was changed" --> rev["LineRevised"]
-    tracker -- "new bytes at active block" --> delta["StreamDelta"]
-    tracker -- "active block ended" --> close["StreamDeltaEnd"]
-```
+<p align="center"><img src="diagrams/streaming-1.svg" alt="streaming diagram 1" style="max-width:100%;height:auto"></p>
 
 ### pyte usage
 
@@ -70,14 +61,7 @@ This gives callers a near-equivalent to Claude's `content_block_delta` event, de
 
 The direct drivers already speak structured protocols, so there's no VT emulation:
 
-```mermaid
-flowchart LR
-    src[("claude -p stream-json<br/>or<br/>codex app-server")] --> parse[adapter parser]
-    parse --> evbus[engine event bus]
-    evbus --> stream["StreamDelta"]
-    evbus --> tools["ToolUse/ToolResult"]
-    evbus --> done["TurnComplete"]
-```
+<p align="center"><img src="diagrams/streaming-2.svg" alt="streaming diagram 2" style="max-width:100%;height:auto"></p>
 
 We map each backend's native event types to engine events directly. Latency is bounded by the source — usually a few ms.
 
@@ -85,14 +69,7 @@ We map each backend's native event types to engine events directly. Latency is b
 
 Remote-server drivers consume yikes!-native events from another yikes! process over HTTP/WebSocket:
 
-```mermaid
-flowchart LR
-    src[("remote yikes! server<br/>event replay + live stream")] --> parse[remote adapter parser]
-    parse --> evbus[engine event bus]
-    evbus --> status["SessionReady / RemoteSessionInfo"]
-    evbus --> stream["StreamDelta"]
-    evbus --> approval["ApprovalRequest"]
-```
+<p align="center"><img src="diagrams/streaming-3.svg" alt="streaming diagram 3" style="max-width:100%;height:auto"></p>
 
 Claude Remote Control is not this path. It is a remote-human control UI owned by Claude. For OpenHort and web clients, the remote path is a yikes! server that owns the Claude/Codex process and streams normalized yikes! events.
 
@@ -102,12 +79,7 @@ Modern TUIs (including recent Claude Code, see [claude-code#37283](https://githu
 
 We use these markers as **frame boundaries**:
 
-```mermaid
-flowchart LR
-    a["?2026h received"] --> hold[buffer dirty lines]
-    hold --> b["?2026l received"]
-    b --> emit[emit accumulated LineRevised events as one frame]
-```
+<p align="center"><img src="diagrams/streaming-4.svg" alt="streaming diagram 4" style="max-width:100%;height:auto"></p>
 
 This means:
 

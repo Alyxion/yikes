@@ -34,19 +34,7 @@ Full reference is in the research notes; here's what the adapter actually uses.
 
 NDJSON. Event types we consume:
 
-```mermaid
-flowchart LR
-    init["system / init"] --> status["system / status"]
-    status --> mstart["stream_event: message_start"]
-    mstart --> cbstart["stream_event: content_block_start"]
-    cbstart --> cbdelta["stream_event: content_block_delta<br/>(text_delta | input_json_delta)"]
-    cbdelta --> cbdelta
-    cbdelta --> cbstop["stream_event: content_block_stop"]
-    cbstop --> mstop["stream_event: message_stop"]
-    mstop --> tool["tool_use → tool_result"]
-    tool --> mstart
-    mstop --> result["result (final)"]
-```
+<p align="center"><img src="../diagrams/backends-claude-code-1.svg" alt="backends claude code diagram 1" style="max-width:100%;height:auto"></p>
 
 Key fields:
 
@@ -75,36 +63,7 @@ The adapter maps:
 
 ## Driving Claude Code in **tmux mode**
 
-```mermaid
-sequenceDiagram
-    participant adp as claude adapter
-    participant drv as tmux driver
-    participant cl as claude (TUI)
-
-    adp->>drv: start(["claude"])
-    drv->>cl: spawn in pane
-    Note over drv,cl: wait for prompt sentinel
-    drv-->>adp: ready
-
-    adp->>drv: send_text(prompt, bracketed_paste=True)
-    adp->>drv: send_key("Enter")
-
-    loop streaming
-        cl-->>drv: bytes (text + ANSI redraws)
-        drv-->>adp: bytes
-        adp->>adp: feed pyte, detect block boundaries
-        adp-->>engine: StreamDelta, LineRevised
-    end
-
-    cl->>cl: prompts y/n for Bash
-    drv-->>adp: ApprovalRequest detected (sentinel match)
-    adp-->>engine: ApprovalRequest
-    engine-->>caller: event
-    caller->>engine: approve()
-    engine->>adp: send "y" + Enter
-    adp->>drv: send_text("y")
-    adp->>drv: send_key("Enter")
-```
+<p align="center"><img src="../diagrams/backends-claude-code-2.svg" alt="backends claude code diagram 2" style="max-width:100%;height:auto"></p>
 
 ### Keystroke vocabulary
 

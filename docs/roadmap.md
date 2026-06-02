@@ -4,38 +4,7 @@ A phased plan so the first useful version ships fast, and each phase has a clear
 
 ## Phasing
 
-```mermaid
-gantt
-    title yikes implementation roadmap
-    dateFormat YYYY-MM-DD
-    axisFormat %b %d
-    section Phase 0
-    Project scaffolding           :p0a, 2026-05-15, 2d
-    Generate Codex schemas        :p0b, after p0a, 1d
-    section Phase 1
-    direct driver + claude -p     :p1a, after p0b, 4d
-    direct driver + codex exec    :p1b, after p1a, 2d
-    yikes ask                     :p1c, after p1b, 2d
-    section Phase 2
-    tmux driver core              :p2a, after p1c, 5d
-    pyte pipeline                 :p2b, after p2a, 3d
-    line-revision events          :p2c, after p2b, 2d
-    yikes spawn/ps/kill/killall   :p2d, after p2c, 3d
-    section Phase 3
-    yikes run streaming           :p3a, after p2d, 3d
-    Approval flow (claude TUI)    :p3b, after p3a, 2d
-    Approval flow (codex TUI)     :p3c, after p3b, 2d
-    section Phase 4
-    codex app-server adapter      :p4a, after p3c, 4d
-    Turn cancellation             :p4b, after p4a, 2d
-    section Phase 5
-    remote-server attach          :p5a, after p4b, 4d
-    six-slot smoke matrix         :p5b, after p5a, 2d
-    section Phase 6
-    yikes attach / logs           :p6a, after p5b, 2d
-    Transcript replay & reconnect :p6b, after p6a, 3d
-    Docs, examples, packaging     :p6c, after p6b, 4d
-```
+<p align="center"><img src="diagrams/roadmap-1.svg" alt="roadmap diagram 1" style="max-width:100%;height:auto"></p>
 
 ## Phase 0 — Scaffolding (≈3 days)
 

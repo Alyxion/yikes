@@ -70,36 +70,7 @@ asyncio.run(main())
 
 The whole library is built around three concepts:
 
-```mermaid
-classDiagram
-    class Manager {
-        +spawn(...) Session
-        +list() list~SessionInfo~
-        +get(id) Session
-        +kill(id)
-        +kill_all()
-    }
-    class Session {
-        +id: str
-        +backend: Backend
-        +driver: Driver
-        +turn(prompt, **opts) Turn
-        +send_key(key)
-        +send_text(text)
-        +events() AsyncIterator~Event~
-        +snapshot() Snapshot
-        +cancel()
-        +close()
-    }
-    class Turn {
-        +id: str
-        +events() AsyncIterator~Event~
-        +result() str
-        +cancel()
-    }
-    Manager --> Session : creates
-    Session --> Turn : creates
-```
+<p align="center"><img src="diagrams/python-library-1.svg" alt="python library diagram 1" style="max-width:100%;height:auto"></p>
 
 ## Top-level API
 

@@ -13,30 +13,7 @@
 
 The same runtime is exposed three ways — an interactive terminal app, a login-gated web control surface, and a clean Python/CLI API — all backed by **one shared controller**.
 
-```mermaid
-flowchart LR
-    You(["👤 You"]) --> Surfaces
-
-    subgraph Surfaces["Surfaces — one shared controller"]
-        direction TB
-        TUI["Terminal app"]
-        Web["Web UI<br/>tabs · panes"]
-        API["CLI · Python API"]
-    end
-
-    Surfaces --> Runtime
-
-    subgraph Runtime["Runtime"]
-        direction TB
-        Host["host"]
-        Docker["docker · isolated"]
-    end
-
-    Runtime -->|"tmux · cli"| Backends["<b>Claude Code</b><br/><b>Codex CLI</b>"]
-
-    classDef live fill:#1976d2,stroke:#1565c0,color:#fff,stroke-width:1.5px
-    class Backends live
-```
+<p align="center"><img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/runtime-architecture.svg" alt="yikes! runtime architecture — you drive one shared controller, exposed as a terminal app, web UI, and CLI/Python API, running Claude Code or Codex on host or in Docker" width="820"></p>
 
 ---
 

@@ -41,41 +41,7 @@ This page is the migration contract. If a feature exists in OpenHort and belongs
 
 yikes! must not model execution as "the CLI process owns the session". The durable owner is a session manager, and frontends attach to it.
 
-```mermaid
-flowchart TB
-    subgraph clients[Clients]
-        tui[Terminal UI]
-        cli[CLI commands]
-        py[Python app]
-        web[Web backend]
-        oh[OpenHort]
-    end
-
-    subgraph yikes[yikes! runtime]
-        mgr[Session manager]
-        store[Session metadata + event log]
-        policy[Policy: dirs, web, MCP, credentials]
-        bridge[MCP bridge]
-        broker[Credential broker]
-    end
-
-    subgraph runtimes[Execution runtimes]
-        direct[Local direct process]
-        tmux[Managed tmux pane]
-        docker[Docker sandbox / yikes! worker server]
-        remote[Remote yikes! server]
-    end
-
-    clients --> mgr
-    mgr --> store
-    mgr --> policy
-    policy --> bridge
-    policy --> broker
-    mgr --> direct
-    mgr --> tmux
-    mgr --> docker
-    mgr --> remote
-```
+<p align="center"><img src="diagrams/openhort-parity-1.svg" alt="openhort parity diagram 1" style="max-width:100%;height:auto"></p>
 
 The future daemon can be named `yikesd`, but the important part is the boundary:
 

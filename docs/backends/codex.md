@@ -2,14 +2,7 @@
 
 The Codex adapter (`yikes.backends.codex`) drives the `codex` binary. Codex has four useful entry points; the adapter picks based on driver and request:
 
-```mermaid
-flowchart LR
-    req[caller request] --> mode{driver?}
-    mode -->|tmux| tui["codex (TUI)<br/>inside tmux pane"]
-    mode -->|direct, long-lived| as["codex app-server<br/>(JSON-RPC stdio)"]
-    mode -->|direct, one-shot| ex["codex exec --json<br/>(NDJSON)"]
-    mode -->|remote-server| rc["remote yikes! server<br/>owning Codex app-server"]
-```
+<p align="center"><img src="../diagrams/backends-codex-1.svg" alt="backends codex diagram 1" style="max-width:100%;height:auto"></p>
 
 **Default for `direct`** is `codex app-server` — it gives token-level deltas, supports turn cancellation, and is the canonical programmatic interface. `codex exec --json` is a fallback for genuinely single-shot scripted runs.
 
@@ -48,47 +41,13 @@ flowchart LR
 
 **`codex exec --json`** emits NDJSON. Top-level event types:
 
-```mermaid
-flowchart LR
-    th[thread.started] --> t1[turn.started]
-    t1 --> i1[item.started]
-    i1 --> i2[item.completed]
-    i2 --> i1
-    i2 --> t2[turn.completed]
-    t2 --> t1
-    t2 --> end1((end))
-    t1 -. error .-> tf[turn.failed]
-```
+<p align="center"><img src="../diagrams/backends-codex-2.svg" alt="backends codex diagram 2" style="max-width:100%;height:auto"></p>
 
 `item.completed.item.type` is one of `userMessage | agentMessage | reasoning | commandExecution | fileChange | mcpToolCall | webSearch | planUpdate`.
 
 **`codex app-server`** speaks JSON-RPC 2.0 over stdio with newline-delimited frames (no `"jsonrpc":"2.0"` header on the wire). Methods and notifications:
 
-```mermaid
-flowchart TB
-    subgraph req[Methods we call]
-        init["initialize"]
-        ts["thread/start"]
-        tr["thread/resume"]
-        tf2["thread/fork"]
-        tl["thread/list"]
-        turn["turn/start"]
-        steer["turn/steer"]
-        interrupt["turn/interrupt"]
-    end
-    subgraph notif[Notifications we consume]
-        ns["turn/started"]
-        nd1["item/agentMessage/delta"]
-        nd2["item/reasoning/delta"]
-        nd3["item/commandExecution/* deltas"]
-        nc["item/completed"]
-        nt["turn/completed"]
-        nf["turn/failed"]
-        ne["error"]
-        sreq["server requests:<br/>item/commandExecution/requestApproval<br/>item/fileChange/requestApproval"]
-        sres["serverRequest/resolved"]
-    end
-```
+<p align="center"><img src="../diagrams/backends-codex-3.svg" alt="backends codex diagram 3" style="max-width:100%;height:auto"></p>
 
 Generate authoritative schemas:
 
@@ -122,33 +81,7 @@ We check these into the repo and codegen Python dataclasses from them at build t
 
 ## Driving Codex in **tmux mode**
 
-```mermaid
-sequenceDiagram
-    participant adp as codex adapter
-    participant drv as tmux driver
-    participant cx as codex (TUI)
-
-    adp->>drv: start(["codex", "--no-alt-screen", "-c", "tui.animations=false"])
-    drv->>cx: spawn in pane
-    Note over drv,cx: wait for composer prompt sentinel
-    drv-->>adp: ready
-
-    adp->>drv: send_text(prompt, bracketed_paste=True)
-    adp->>drv: send_key("Enter")
-
-    loop streaming
-        cx-->>drv: bytes (text, ANSI, ratatui redraws)
-        drv-->>adp: bytes
-        adp->>adp: feed pyte → block deltas
-        adp-->>engine: StreamDelta, LineRevised
-    end
-
-    cx->>cx: BottomPane modal "Allow shell run?"
-    drv-->>adp: ApprovalRequest detected
-    adp-->>engine: ApprovalRequest
-    caller->>engine: approve()
-    adp->>drv: send_key("y")  %% or Enter
-```
+<p align="center"><img src="../diagrams/backends-codex-4.svg" alt="backends codex diagram 4" style="max-width:100%;height:auto"></p>
 
 ### Required tmux-mode flags
 

@@ -29,22 +29,7 @@ answer = session.prompt("Change the headline to 'Hello Michael'.")
 
 ## Website Editor Shape
 
-```mermaid
-flowchart TB
-    browser[Browser]
-    iframe[iframe: preview page]
-    chat[chatbox below iframe]
-    api[Python web backend]
-    yikes[yikes! Session]
-    files[HTML/CSS/JS files]
-
-    browser --> iframe
-    browser --> chat
-    chat --> api
-    api --> yikes
-    yikes --> files
-    files --> iframe
-```
+<p align="center"><img src="diagrams/embedding-1.svg" alt="embedding diagram 1" style="max-width:100%;height:auto"></p>
 
 The browser should not talk directly to Claude or Codex. It talks to your Python backend, and the backend owns the yikes! session.
 
