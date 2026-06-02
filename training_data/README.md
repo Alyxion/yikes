@@ -44,4 +44,21 @@ training_data/samples/<backend>/<timestamp>__<label>__<session>/
 - `tmux_version`, `location` (`host`/`docker`), `driver`, `terminal` size.
 - `captured_at` (UTC), `frame_count`, `frame_interval_ms`, `notes`.
 
-Samples are committed deliberately — this directory *is* the dataset.
+## Captures are NOT committed by default
+
+Raw captures are verbatim terminal dumps of live sessions and can contain
+secrets (keys, hashes, tokens). To prevent leaks, capture artifacts under
+`samples/<backend>/<sample>/` are **gitignored**, and a **pre-commit hook**
+(`.githooks/pre-commit`) refuses to commit `frame-*.ansi` / `meta.json` even if
+force-added. Enable the hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+To contribute a sample to the shared dataset, **scrub any secrets first**, then:
+
+```bash
+git add -f training_data/samples/<backend>/<sample>
+git commit --no-verify
+```

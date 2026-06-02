@@ -122,7 +122,8 @@ Full documentation lives in [`docs/`](docs) (architecture, CLI reference, tmux l
 ## Development
 
 ```bash
-poetry install            # runtime + dev dependencies
+poetry install                       # runtime + dev dependencies
+git config core.hooksPath .githooks  # block accidental commits of raw captures
 poetry run pytest -q
 poetry run mkdocs build --strict
 ```

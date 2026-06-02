@@ -1,0 +1,21 @@
+#!/bin/sh
+# yikes pre-commit guard.
+#
+# Raw training captures (training_data/samples/<backend>/<sample>/frame-*.ansi
+# and meta.json) are verbatim terminal dumps of live sessions and can contain
+# secrets. Refuse to commit them so it cannot happen by accident. The dataset
+# scaffolding (README.md, .gitkeep) is fine; deliberately scrubbed samples can
+# still be committed with `git commit --no-verify`.
+set -eu
+
+blocked=$(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '^training_data/samples/.+/(frame-[0-9]+\.ansi|meta\.json)$' || true)
+
+if [ -n "$blocked" ]; then
+  printf '\033[31myikes pre-commit: refusing to commit raw training captures.\033[0m\n' >&2
+  printf 'These are live terminal snapshots and may contain project secrets:\n\n' >&2
+  printf '%s\n' "$blocked" | sed 's/^/  /' >&2
+  printf '\nScrub them first, or if this is intentional: git commit --no-verify\n' >&2
+  exit 1
+fi
+exit 0

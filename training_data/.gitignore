@@ -1,0 +1,4 @@
+# Live captures are raw terminal dumps and can contain project secrets — keep
+# them local. The dataset scaffolding (README.md, samples/.gitkeep) is tracked.
+# To commit a deliberately scrubbed sample: git add -f <path> && git commit --no-verify
+samples/*/
