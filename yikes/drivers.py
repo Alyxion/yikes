@@ -1801,7 +1801,7 @@ async def _codex_ws_turn(
             ws,
             "initialize",
             {
-                "clientInfo": {"name": "yikes", "version": "0.1.0"},
+                "clientInfo": {"name": "yikes", "version": "0.1.7"},
                 "capabilities": {"experimentalApi": True},
             },
         )

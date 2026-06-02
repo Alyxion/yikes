@@ -1,6 +1,6 @@
 [project]
 name = "yikes"
-version = "0.1.0"
+version = "0.1.7"
 description = "Terminal-first runtime for Claude Code and Codex CLI — durable interactive sessions, Docker isolation, and a web control surface"
 readme = "README.md"
 license = "MIT"
