@@ -13,7 +13,7 @@
 
 The same runtime is exposed three ways — an interactive terminal app, a login-gated web control surface, and a clean Python/CLI API — all backed by **one shared controller**.
 
-<p align="center"><img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/runtime-architecture.svg" alt="yikes! runtime architecture — you drive one shared controller, exposed as a terminal app, web UI, and CLI/Python API, running Claude Code or Codex on host or in Docker" width="820"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/runtime-architecture.svg" alt="yikes! runtime architecture — you drive one shared controller (terminal app, web UI, CLI/Python API) that runs Claude Code or Codex via either driver (tmux interactive or one-shot cli, claude -p / codex exec) on either location (host or docker, isolated)" width="820"></p>
 
 ---
 

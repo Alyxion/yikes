@@ -90,3 +90,42 @@ def test_terminal_sidebar_has_no_manual_refresh_or_attach_buttons() -> None:
 
     assert 'Button("Refresh Sessions"' not in source
     assert 'Button("Attach"' not in source
+
+
+def test_web_has_training_capture_button_and_hotkey() -> None:
+    root = Path(__file__).resolve().parents[1] / "yikes" / "web_static"
+    html = (root / "index.html").read_text()
+    js = (root / "yikes-web.js").read_text()
+
+    # Discoverable element + popover + toast.
+    assert 'id="capture-btn"' in html
+    assert 'id="capture-pop"' in html
+    assert 'id="toast"' in html
+    # Sends a train.capture message for the active session and handles the reply.
+    assert 'send("train.capture"' in js
+    assert 'message.type === "train.captured"' in js
+    # Ctrl+Alt+L hotkey, registered in the capture phase so it beats the terminal.
+    assert "event.ctrlKey && event.altKey" in js
+    assert '}, true);' in js
+
+
+def test_label_button_is_developer_gated() -> None:
+    js = (Path(__file__).resolve().parents[1] / "yikes" / "web_static" / "yikes-web.js").read_text()
+    # The label button only shows when the server reports developer mode.
+    assert "!!next.developer" in js
+
+
+def test_web_shows_per_state_activity_icons() -> None:
+    root = Path(__file__).resolve().parents[1] / "yikes" / "web_static"
+    js = (root / "yikes-web.js").read_text()
+    css = (root / "yikes-web.css").read_text()
+    # Phosphor inline SVGs, not emoji, animated for working/waiting.
+    assert "function activityIconSvg" in js
+    assert "ICON_PATHS" in js and "ACTIVITY_ICON" in js
+    assert 'activityIconSvg(stateName)' in js   # in the activity pill
+    assert "activityIconSvg(actState)" in js    # and per tab
+    assert "act-pulse" in js and "act-spin" in js
+    assert 'fill="currentColor"' in js  # else paths render black on dark tabs
+    assert "@keyframes act-spin" in css and "@keyframes act-pulse" in css
+    # 3-column tab grid (icon | title | close) so titles are not over-truncated.
+    assert "grid-template-columns: 16px minmax(0, 1fr) 18px;" in css

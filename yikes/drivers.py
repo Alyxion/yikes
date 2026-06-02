@@ -25,6 +25,7 @@ from .attachments import prompt_with_image_references, prompt_with_mapped_image_
 from .credentials import ClaudeCredentialProvider, CodexCredentialProvider
 from .mcp import McpConfig, McpServerConfig, resolve_servers
 from .mcp_proxy import ProxyManager
+from .naming import project_label
 from .process import require_binary, run_process
 from .prompt_profile import load_prompt_profile
 from .runtime import DurableSessionManager, RuntimeKind, RuntimeRef, SessionState
@@ -916,9 +917,10 @@ def _ensure_local_tmux_session(
     label = _tmux_label(backend, cwd, model, session_id=session_id)
     socket_path = tmux_dir / f"{label}.sock"
     session_name = label
+    tab_title = project_label(cwd) or session_name
     if not _tmux_session_alive(socket_path, session_name, cwd):
         _start_tmux_server(socket_path, cwd)
-        _set_tmux_options(socket_path, cwd)
+        _set_tmux_options(socket_path, cwd, title=tab_title)
         codex_home = _prepare_local_codex_home(
             tmux_dir,
             label,
@@ -943,7 +945,7 @@ def _ensure_local_tmux_session(
             *_backend_tui_argv(backend, model=model, codex_home=codex_home),
         ]
         run_process(argv, cwd=cwd, timeout=20)
-        _set_tmux_options(socket_path, cwd)
+        _set_tmux_options(socket_path, cwd, title=tab_title)
         if not _tmux_session_alive(socket_path, session_name, cwd):
             raise BackendRunError(
                 f"tmux session {session_name} exited before it could receive input",
@@ -999,12 +1001,17 @@ def _backend_tui_argv(backend: str, *, model: str | None, codex_home: Path | Non
     raise DriverUnavailable(f"unknown backend: {backend}")
 
 
-def _set_tmux_options(socket_path: Path, cwd: Path) -> None:
+def _set_tmux_options(socket_path: Path, cwd: Path, *, title: str | None = None) -> None:
+    # Name the outer terminal tab after the project (same git-relative label the
+    # web UI uses), so iTerm/terminals show "repo/folder" instead of "tmux".
+    title = title or "#S"
     for args in (
         ["set", "-g", "status", "off"],
         ["set", "-g", "remain-on-exit", "on"],
         ["set", "-g", "history-limit", "100000"],
         ["set", "-g", "extended-keys", "off"],
+        ["set", "-g", "set-titles", "on"],
+        ["set", "-g", "set-titles-string", title],
         # Track the smallest attached client so a native terminal + the web UI's
         # attach both see the whole pane (no over-wide rows / hidden bottom rows).
         ["set", "-g", "window-size", "smallest"],
@@ -1414,9 +1421,14 @@ def _ensure_docker_tmux_session(
         sandbox.meta.user_data["tmux_socket"] = str(socket_path)
         sandbox.meta.user_data["tmux_session"] = session_name
         sandbox._save()
+        host_cwd = sandbox.meta.user_data.get("cwd")
+        title = (project_label(Path(host_cwd)) if host_cwd else "") or session_name
         for option in (
             ["set", "-g", "status", "off"],
             ["set", "-g", "extended-keys", "off"],
+            # Name the outer terminal tab after the project (matches the web UI label).
+            ["set", "-g", "set-titles", "on"],
+            ["set", "-g", "set-titles-string", title],
             ["set", "-g", "window-size", "smallest"],
             ["setw", "-g", "aggressive-resize", "on"],
         ):

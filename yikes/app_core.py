@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 import time
@@ -20,6 +21,16 @@ from .services import BackendTransport, ChatTransport, Conversation
 from .project_config import load_project_config
 from .session_inventory import SessionInventory, SessionLifecycle, SessionSummary, project_label, record_direct_session
 from .state import AppState, load_app_state, save_app_state
+
+_DEV_TRUE = {"1", "true", "yes", "on", "dev", "debug", "developer"}
+
+
+def _is_developer() -> bool:
+    """Developer mode for the web surface (gates dev-only affordances)."""
+    return any(
+        str(os.environ.get(name, "")).strip().lower() in _DEV_TRUE
+        for name in ("YIKES_WEB_DEV", "YIKES_DEVELOPER_MODE", "YIKES_DEV_MODE")
+    )
 
 
 @dataclass
@@ -100,7 +111,13 @@ class YikesAppController:
                 "status": self.conversation.status(),
                 "start_cwd": str(self.start_cwd),
                 "startup": self.startup_status(),
-                "sessions": [self._summary_json(session, activity=activity if session.id == active else None) for session in sessions],
+                "sessions": [
+                    self._summary_json(
+                        session,
+                        activity=activity if session.id == active else self._activity_for(session.id),
+                    )
+                    for session in sessions
+                ],
                 "active_session_id": active,
                 "active_session_activity": activity.to_json() if activity else None,
                 "has_active_session": active is not None or bool(self.conversation.messages),
@@ -111,6 +128,7 @@ class YikesAppController:
                 "processes": self.process_manager.snapshot() if self.process_manager else {},
                 "pending_new": self.pending_new.to_json() if self.pending_new else None,
                 "submission_active": self.submission_active,
+                "developer": _is_developer(),
                 "error": error,
             }
 
@@ -156,6 +174,13 @@ class YikesAppController:
             if selected in self.session_lines or self.conversation.messages:
                 return TerminalActivity("idle", "idle", 0.65, "direct CLI session is ready")
         return self.output_service.activity(self.lifecycle, selected)
+
+    def _activity_for(self, session_id: str) -> TerminalActivity | None:
+        """Snapshot-based activity for a non-active session (for per-tab status)."""
+        try:
+            return self.output_service.activity(self.lifecycle, session_id)
+        except Exception:
+            return None
 
     def startup_status(self) -> dict[str, object]:
         return {
@@ -402,6 +427,32 @@ class YikesAppController:
 
             self.process_manager.stop(ManagedProcessManager.key(session_id, pane_id))
         return self.state()
+
+    def capture_training_sample(
+        self, session_id: str, label: str, notes: str | None = None
+    ) -> dict[str, Any]:
+        """Record a labeled terminal-state sample for the active session."""
+        from .training_capture import CaptureError, capture_sample
+
+        session_id = (session_id or self.active_session_id or "").strip()
+        if not session_id:
+            return {"ok": False, "error": "no active session to capture"}
+        try:
+            result = capture_sample(label, session_id, notes=notes)
+        except CaptureError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # surface unexpected failures to the toast
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "label": result.label,
+            "predicted": result.predicted,
+            "matches": result.predicted == result.label,
+            "backend": result.backend,
+            "backend_version": result.backend_version,
+            "frames": result.frame_count,
+            "path": str(result.path),
+        }
 
     def _pane_process_spec(self, session_id: str, pane_id: str) -> dict[str, Any] | None:
         session = next((s for s in self.sessions() if s.id == session_id), None)

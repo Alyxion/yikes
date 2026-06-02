@@ -81,6 +81,7 @@ nav:
       - Codex: backends/codex.md
   - tmux Layer: tmux-layer.md
   - Streaming & Updates: streaming.md
+  - Activity & Training: activity-training.md
   - Python Library: python-library.md
   - Embedding: embedding.md
   - OpenHort Parity: openhort-parity.md

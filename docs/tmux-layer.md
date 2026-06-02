@@ -36,6 +36,17 @@ When no `cwd` is passed, tmux-backed sessions receive a generated workspace:
 
 Generated workspaces are intentionally empty yikes!-owned roots, so the startup trust prompt can be confirmed automatically. This avoids accidentally treating the caller's current host directory as trusted. Docker+tmux does not mount the host cwd in this case.
 
+## Terminal tab titles
+
+Each tmux-backed session enables `set-titles` and sets `set-titles-string` to the
+project's git-relative label — the same `repo/folder` name the web UI uses (via
+[`naming.project_label`](python-library.md)). So a terminal that allows
+applications to set the title (iTerm2, most modern terminals — on by default)
+shows `yikes/dashboard` per tab instead of a generic `tmux`. Outside a git repo
+the label is just the folder name; for Docker sessions the host project's label
+is used. No literal title is hardcoded — it is derived from the working directory
+at session creation.
+
 ## Overtake / Attach
 
 Every tmux-backed session records enough metadata to produce an attach command:

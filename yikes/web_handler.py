@@ -77,6 +77,15 @@ class WebMessageHandler:
                         str(message.get("session_id", "")), str(message.get("pane_id", ""))
                     ),
                 }
+            if msg_type == "train.capture":
+                # Capture blocks ~0.5s (rapid snapshots); keep the event loop free.
+                data = await asyncio.to_thread(
+                    self.controller.capture_training_sample,
+                    str(message.get("session_id", "")),
+                    str(message.get("label", "")),
+                    _optional_text(message.get("notes")),
+                )
+                return {"type": "train.captured", "data": data}
             if msg_type == "term.open":
                 return self._open_terminal(message)
             if msg_type == "term.resize":

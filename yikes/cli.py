@@ -425,6 +425,39 @@ if typer:
         closed = sum(1 for result in results if result.closed)
         typer.echo(_fmt(f"Closed {closed}/{len(results)} sessions.", "success"))
 
+    @app.command("capture", hidden=True)
+    def capture(
+        label: str = typer.Argument(..., help="True state: idle, awaiting-selection, thinking, streaming, unknown."),
+        session: str | None = typer.Argument(None, help="Session id/name. Default: the running session for this directory."),
+        notes: str | None = typer.Option(None, "--notes", help="Free-text note stored with the sample."),
+        frames: int = typer.Option(4, "--frames", help="Number of rapid snapshots to capture."),
+        span: float = typer.Option(0.5, "--span", help="Seconds the frames are spread across (catches spinner animation)."),
+        cwd: Path | None = typer.Option(None, "--cwd", help="Directory used to auto-pick a session."),
+        runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
+        sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
+    ) -> None:
+        """Record a labeled training sample of a live session's terminal state."""
+        from .training_capture import CaptureError, capture_sample
+
+        try:
+            result = capture_sample(
+                label,
+                session,
+                cwd=cwd,
+                notes=notes,
+                frames=frames,
+                span=span,
+                runtime_store=runtime_store,
+                sandbox_store=sandbox_store,
+            )
+        except CaptureError as exc:
+            typer.echo(f"capture: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        flag = "" if result.predicted == result.label else _fmt(f"  (yikes predicted: {result.predicted})", "warn")
+        typer.echo(_fmt(f"Captured {result.frame_count} frame(s) → {result.label}{flag}", "success"))
+        typer.echo(f"  {result.backend} {result.backend_version}")
+        typer.echo(f"  {result.path}")
+
     @app.command("token")
     def token(
         name: str = typer.Option("browser", "--name", "-n", help="Human label for this token."),
@@ -513,6 +546,9 @@ if typer:
         from .app_core import YikesAppController
         from .web import create_app
 
+        # Surface developer mode to the app so dev-only UI (e.g. the training
+        # label button) is gated on it; off by default for normal users.
+        os.environ["YIKES_WEB_DEV"] = "1" if dev else "0"
         app_instance = create_app(YikesAppController(cwd=root), auth=auth_config)
         local_url = auth_config.login_url(host=advertise[0], port=port)
         if open_browser:

@@ -47,6 +47,17 @@ class _Observation:
     digest: str
     nonblank_lines: int
     updated_at: float
+    change_streak: int = 0  # consecutive observations whose snapshot changed
+    stable_streak: int = 0  # consecutive observations whose snapshot was identical
+    reported_state: str = IDLE
+
+
+# Streaming uses hysteresis so a single transient repaint (attaching/viewing a
+# tab, a resize reflow, a partial capture frame) does NOT flip an idle session to
+# "streaming". Real streaming changes the snapshot on consecutive polls; an
+# isolated blip does not.
+_STREAM_ENTER = 2  # consecutive changed snapshots required to enter streaming
+_STREAM_EXIT = 2   # consecutive stable snapshots required to leave streaming
 
 
 class ActivityMonitor:
@@ -62,11 +73,18 @@ class ActivityMonitor:
         nonblank_lines = sum(1 for line in normalized.splitlines() if line.strip())
         previous = self._observations.get(session_id)
         changed = previous is not None and previous.digest != digest
-        self._observations[session_id] = _Observation(digest, nonblank_lines, current_time)
+
+        if previous is None:
+            change_streak = stable_streak = 0
+        elif changed:
+            change_streak, stable_streak = previous.change_streak + 1, 0
+        else:
+            change_streak, stable_streak = 0, previous.stable_streak + 1
+        prev_reported = previous.reported_state if previous is not None else IDLE
 
         base = classify_terminal_snapshot(normalized, now=current_time)
         if base.state in {AWAITING_SELECTION, THINKING, UNKNOWN}:
-            return TerminalActivity(
+            result = TerminalActivity(
                 state=base.state,
                 label=base.label,
                 confidence=base.confidence,
@@ -74,13 +92,23 @@ class ActivityMonitor:
                 changed=changed,
                 updated_at=current_time,
             )
-        if changed and previous is not None:
-            line_delta = nonblank_lines - previous.nonblank_lines
-            reason = "terminal output changed"
-            if line_delta > 0:
-                reason = f"terminal output grew by {line_delta} lines"
-            return TerminalActivity(STREAMING, "streaming", 0.72, reason, changed=True, updated_at=current_time)
-        return TerminalActivity(IDLE, "idle", 0.58, "terminal snapshot is stable", changed=False, updated_at=current_time)
+        else:
+            # Debounced idle/streaming decision (hysteresis on both edges).
+            if prev_reported == STREAMING:
+                streaming = stable_streak < _STREAM_EXIT
+            else:
+                streaming = change_streak >= _STREAM_ENTER
+            if streaming:
+                line_delta = nonblank_lines - (previous.nonblank_lines if previous is not None else nonblank_lines)
+                reason = f"terminal output grew by {line_delta} lines" if line_delta > 0 else "terminal output changing"
+                result = TerminalActivity(STREAMING, "streaming", 0.72, reason, changed=True, updated_at=current_time)
+            else:
+                result = TerminalActivity(IDLE, "idle", 0.58, "terminal snapshot is stable", changed=changed, updated_at=current_time)
+
+        self._observations[session_id] = _Observation(
+            digest, nonblank_lines, current_time, change_streak, stable_streak, result.state
+        )
+        return result
 
 
 def classify_terminal_snapshot(snapshot: str, *, now: float | None = None) -> TerminalActivity:

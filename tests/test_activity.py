@@ -80,15 +80,46 @@ Musing… (3m 20s · ↓ 12.8k tokens)
     assert activity.state == ACTIVITY_THINKING
 
 
-def test_activity_monitor_detects_streaming_when_terminal_changes() -> None:
+def test_activity_monitor_detects_streaming_on_sustained_change() -> None:
     monitor = ActivityMonitor()
 
     first = monitor.observe("session-1", "Assistant: starting", now=1.0)
-    second = monitor.observe("session-1", "Assistant: starting\nAssistant: more output", now=2.0)
+    # A single changed snapshot is debounced (could be a transient repaint).
+    second = monitor.observe("session-1", "Assistant: starting\nmore", now=2.0)
+    # A second consecutive change is real streaming.
+    third = monitor.observe("session-1", "Assistant: starting\nmore\nmore2", now=3.0)
 
     assert first.state == ACTIVITY_IDLE
-    assert second.state == ACTIVITY_STREAMING
-    assert second.changed is True
+    assert second.state == ACTIVITY_IDLE
+    assert third.state == ACTIVITY_STREAMING
+    assert third.changed is True
+
+
+def test_activity_monitor_ignores_isolated_repaint() -> None:
+    """A one-frame change (e.g. attach/resize repaint) must not flip to streaming."""
+    monitor = ActivityMonitor()
+
+    monitor.observe("session-1", "prompt", now=1.0)
+    blip = monitor.observe("session-1", "prompt (redrawn)", now=2.0)  # single change
+    after = monitor.observe("session-1", "prompt (redrawn)", now=3.0)  # stable again
+
+    assert blip.state == ACTIVITY_IDLE
+    assert after.state == ACTIVITY_IDLE
+
+
+def test_activity_monitor_holds_streaming_through_one_stable_frame() -> None:
+    """Once streaming, a single identical frame should not drop straight to idle."""
+    monitor = ActivityMonitor()
+
+    monitor.observe("s", "a", now=1.0)
+    monitor.observe("s", "a\nb", now=2.0)
+    streaming = monitor.observe("s", "a\nb\nc", now=3.0)
+    held = monitor.observe("s", "a\nb\nc", now=4.0)  # one identical frame
+    idle = monitor.observe("s", "a\nb\nc", now=5.0)  # two identical -> idle
+
+    assert streaming.state == ACTIVITY_STREAMING
+    assert held.state == ACTIVITY_STREAMING
+    assert idle.state == ACTIVITY_IDLE
 
 
 def test_activity_monitor_reports_idle_when_snapshot_is_stable() -> None:

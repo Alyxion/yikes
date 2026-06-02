@@ -146,7 +146,8 @@ def test_session_display_name_prefers_custom_then_dir() -> None:
 def test_project_label_uses_git_root_and_subfolder(tmp_path: Path) -> None:
     import subprocess
 
-    from yikes.session_inventory import _git_root, _session_display_name, project_label
+    from yikes.naming import _git_root, project_label
+    from yikes.session_inventory import _session_display_name
 
     repo = tmp_path / "fckten"
     sub = repo / "experiments" / "dashboard"

@@ -5,7 +5,6 @@ import re
 import shlex
 import tempfile
 import time
-from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -13,6 +12,7 @@ import subprocess
 from .activity import ActivityMonitor, TerminalActivity
 from .domain import Backend, ChatOptions, Driver
 from .errors import BackendRunError, DriverUnavailable, YikesError
+from .naming import project_label
 from .process import run_process
 from .runtime import DurableSessionManager, RuntimeKind, RuntimeRef, SessionState
 from .sandbox import SandboxManager
@@ -153,39 +153,6 @@ def _looks_auto(stored: str, cwd: "Path | None") -> bool:
     base = Path(str(cwd)).name
     sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip("-")[:80]
     return stored in {base, sanitized}
-
-
-@lru_cache(maxsize=256)
-def _git_root(cwd: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
-def project_label(cwd: "Path | None") -> str:
-    """``<git-repo>/<current-folder>`` for a repo subdir, else the folder name."""
-    if cwd is None:
-        return ""
-    cwd = Path(str(cwd))
-    root = _git_root(str(cwd))
-    if root:
-        root_path = Path(root)
-        try:
-            same = cwd.resolve() == root_path.resolve()
-        except OSError:
-            same = str(cwd) == root
-        return root_path.name if same else f"{root_path.name}/{cwd.name}"
-    return cwd.name
 
 
 def _runtime_detail(runtime: object) -> str:
@@ -724,7 +691,7 @@ class TmuxSessionController:
             cwd=cwd,
             timeout=20,
         )
-        _set_tmux_options(socket_path, cwd)
+        _set_tmux_options(socket_path, cwd, title=project_label(cwd) or session_name)
         if not self._is_alive(str(socket_path), session_name, cwd):
             raise BackendRunError(
                 f"tmux session {session_name} exited before it could receive input",
@@ -1040,11 +1007,15 @@ def _tmux_session_alive(socket_path: Path, session_name: str, cwd: Path) -> bool
     return result.returncode == 0
 
 
-def _set_tmux_options(socket_path: Path, cwd: Path) -> None:
+def _set_tmux_options(socket_path: Path, cwd: Path, *, title: str | None = None) -> None:
+    title = title or "#S"
     for args in (
         ["set", "-g", "status", "off"],
         ["set", "-g", "history-limit", "100000"],
         ["set", "-g", "extended-keys", "off"],
+        # Name the outer terminal tab after the project (matches the web UI label).
+        ["set", "-g", "set-titles", "on"],
+        ["set", "-g", "set-titles-string", title],
         # Size the window to the SMALLEST attached client so every client (e.g. a
         # native terminal + the web UI's attach) sees the whole pane — otherwise
         # the larger client's size hides the bottom rows on the smaller one.

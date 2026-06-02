@@ -19,6 +19,7 @@
       <main class="workspace">
         <div class="topbar">
           <div id="tabs" class="tabs"></div>
+          <button id="capture-btn" class="icon-button hidden" type="button" title="Label this terminal's state for training (⌃⌥L)">◉</button>
           <button id="view-toggle" class="icon-button" type="button" title="Toggle high-level/dev view">{} </button>
         </div>
         <div id="pane-bar" class="pane-bar hidden"></div>
@@ -88,6 +89,18 @@
             </div>
           </section>
         </div>
+        <div id="capture-pop" class="capture-pop hidden">
+          <section class="capture-card">
+            <h2>What state is this really?</h2>
+            <p class="capture-hint">Records 4 rapid snapshots + this label as training data.</p>
+            <div id="capture-labels" class="capture-labels"></div>
+            <input id="capture-notes" autocomplete="off" placeholder="Optional note (what made it wrong?)">
+            <div class="capture-actions">
+              <button id="capture-cancel" type="button">Cancel</button>
+            </div>
+          </section>
+        </div>
+        <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
         <form id="composer" class="composer">
           <input id="message" autocomplete="off" placeholder="Message, /help, /model, /clear...">
           <button class="primary" type="submit">Send</button>

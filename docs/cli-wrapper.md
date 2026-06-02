@@ -214,6 +214,8 @@ Flags: `--host` (default `0.0.0.0`, all interfaces; use `127.0.0.1` for loopback
 
 **Advertised URLs.** On startup the server prints a login URL for every host it is actually reachable on. Bound to all interfaces (the default) it prints a working `http://<lan-ip>:<port>/login?key=…` for each real network interface, so you can copy one straight to another machine. Bound to `--host 127.0.0.1` it prints just the loopback URL plus a hint showing the LAN address and the `--host 0.0.0.0` command to make it reachable. `yikes web --url` prints a single best URL — the LAN address when bound to all interfaces, otherwise the bind host. If the port is already in use (e.g. another `yikes web` is running), it reports that cleanly instead of a bind traceback.
 
+**Labeling activity state.** When the top-bar activity reading is wrong, click the **◉** button (or press **Ctrl+Alt+L**) to record what the terminal *actually* shows as a training sample — see [Activity & Training](activity-training.md).
+
 **Remote access.** Two ways to reach it from another machine:
 
 - *Same network, direct (default):* the server already listens on all interfaces, so open one of the printed `http://<lan-ip>:<port>/login?key=…` URLs from the other machine. The login key (rate-limited, 256-bit) is the guard; front it with a mesh VPN such as Tailscale if you want it reachable beyond the LAN.
@@ -335,6 +337,21 @@ yikes attach yik_3f9a
 ```
 
 Prints the tmux attach command or remote-server attach metadata if invoked with `--print-only` (for embedding in IDE integrations).
+
+### `yikes capture` — record a labeled state sample (developer)
+
+Hidden from `yikes --help`. Records ground-truth training samples for the
+activity detector by grabbing several rapid full-colour terminal snapshots of a
+live session and storing them with the true state label.
+
+```bash
+yikes capture awaiting-selection         # auto-picks the running session for this dir
+yikes capture streaming <id|name>        # target a session explicitly
+yikes capture idle --frames 6 --span 0.8 --notes "post-turn prompt"
+```
+
+See [Activity & Training](activity-training.md) for the states, storage layout,
+and `meta.json` fields.
 
 ### `yikes logs` — replay or tail a session's events
 

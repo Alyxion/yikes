@@ -39,6 +39,12 @@ const els = {
   links: document.getElementById("links"),
   tabs: document.getElementById("tabs"),
   viewToggle: document.getElementById("view-toggle"),
+  captureBtn: document.getElementById("capture-btn"),
+  capturePop: document.getElementById("capture-pop"),
+  captureLabels: document.getElementById("capture-labels"),
+  captureNotes: document.getElementById("capture-notes"),
+  captureCancel: document.getElementById("capture-cancel"),
+  toast: document.getElementById("toast"),
   terminal: document.getElementById("terminal"),
   terminalModeBar: document.getElementById("terminal-mode-bar"),
   termReturn: document.getElementById("term-return"),
@@ -70,6 +76,26 @@ const els = {
   dialogCancel: document.getElementById("dialog-cancel"),
   dialogConfirm: document.getElementById("dialog-confirm"),
 };
+
+// Per-state Phosphor icons (inline SVG, animated for working/waiting) so it is
+// scannable at a glance who is waiting on you vs busy. Bold weight, 256 viewBox.
+const ICON_PATHS = {
+  spinner: "M236,128a108,108,0,0,1-216,0c0-42.52,24.73-81.34,63-98.9A12,12,0,1,1,93,50.91C63.24,64.57,44,94.83,44,128a84,84,0,0,0,168,0c0-33.17-19.24-63.43-49-77.09A12,12,0,1,1,173,29.1C211.27,46.66,236,85.48,236,128Z",
+  hand: "M188,44a32,32,0,0,0-8,1V44a32,32,0,0,0-60.79-14A32,32,0,0,0,76,60v50.83a32,32,0,0,0-52,36.7C55.82,214.6,75.35,244,128,244a92.1,92.1,0,0,0,92-92V76A32,32,0,0,0,188,44Zm8,108a68.08,68.08,0,0,1-68,68c-35.83,0-49.71-14-82.48-83.14-.14-.29-.29-.58-.45-.86a8,8,0,0,1,13.85-8l.21.35,18.68,30A12,12,0,0,0,100,152V60a8,8,0,0,1,16,0v60a12,12,0,0,0,24,0V44a8,8,0,0,1,16,0v76a12,12,0,0,0,24,0V76a8,8,0,0,1,16,0Z",
+  check: "M176.49,95.51a12,12,0,0,1,0,17l-56,56a12,12,0,0,1-17,0l-24-24a12,12,0,1,1,17-17L112,143l47.51-47.52A12,12,0,0,1,176.49,95.51ZM236,128A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128Z",
+  question: "M144,180a16,16,0,1,1-16-16A16,16,0,0,1,144,180Zm92-52A108,108,0,1,1,128,20,108.12,108.12,0,0,1,236,128Zm-24,0a84,84,0,1,0-84,84A84.09,84.09,0,0,0,212,128ZM128,64c-24.26,0-44,17.94-44,40v4a12,12,0,0,0,24,0v-4c0-8.82,9-16,20-16s20,7.18,20,16-9,16-20,16a12,12,0,0,0-12,12v8a12,12,0,0,0,23.73,2.56C158.31,137.88,172,122.37,172,104,172,81.94,152.26,64,128,64Z",
+};
+const ACTIVITY_ICON = {
+  idle: { path: ICON_PATHS.check, anim: "" },
+  "awaiting-selection": { path: ICON_PATHS.hand, anim: "act-pulse" },
+  thinking: { path: ICON_PATHS.spinner, anim: "act-spin" },
+  streaming: { path: ICON_PATHS.spinner, anim: "act-spin" },
+  unknown: { path: ICON_PATHS.question, anim: "" },
+};
+function activityIconSvg(stateName) {
+  const def = ACTIVITY_ICON[stateName] || ACTIVITY_ICON.unknown;
+  return `<svg class="act-ico act-${stateName || "unknown"} ${def.anim}" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="${def.path}"/></svg>`;
+}
 
 function connect() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -216,6 +242,7 @@ function handleMessage(message) {
     render(message.state);
   }
   if (message.type === "suggestions") renderSuggestions(message.items || []);
+  if (message.type === "train.captured") handleCaptured(message.data || {});
   if (message.type === "dir.entries") renderDirectory(message.data);
   if (message.type === "term.opened") connectTerminal(message.terminal_id);
   if (message.type === "error") {
@@ -269,6 +296,12 @@ function render(next) {
   // so the "＋ web" add affordance is available without any yikes.toml.
   const showPaneBar = !noSession && panes.length > 0;
   els.paneBar.classList.toggle("hidden", !showPaneBar);
+  // The "label this state" affordance is available whenever a live session is in
+  // view; hide its popover if the session went away.
+  // The training-label affordance is developer-only (off for normal users).
+  const showCapture = !noSession && !!next.active_session_id && !!next.developer;
+  els.captureBtn.classList.toggle("hidden", !showCapture);
+  if (!showCapture) closeCapturePop();
   els.noSession.classList.toggle("hidden", !noSession);
   // Terminal pane (or a non-pane CLI session) uses the terminal panel; web/data
   // panes replace it.
@@ -418,7 +451,7 @@ function renderStatusControl(control, value) {
 function renderActivity(activity) {
   const value = activity?.label || "unknown";
   const stateName = activity?.state || "unknown";
-  els.activityPill.textContent = value;
+  els.activityPill.innerHTML = `${activityIconSvg(stateName)}<span>${escapeHtml(value)}</span>`;
   els.activityPill.title = activity?.reason || "";
   els.activityPill.className = `activity-pill activity-${stateName}`;
 }
@@ -433,6 +466,7 @@ function renderTabs(sessions, activeId) {
   if (!sessions.length) {
     const empty = document.createElement("button");
     empty.className = "tab active";
+    empty.style.display = "block";
     empty.innerHTML = "<span class='tab-title'>new session</span><span class='tab-meta'>not connected</span>";
     empty.onclick = () => send("new.open");
     els.tabs.replaceChildren(empty, plus);
@@ -441,11 +475,12 @@ function renderTabs(sessions, activeId) {
   els.tabs.replaceChildren(...sessions.map(session => {
     const tab = document.createElement("button");
     tab.className = `tab ${session.id === activeId ? "active" : ""}`;
-    const activity = session.activity ? ` · ${session.activity.label}` : "";
+    const actState = session.activity?.state || "unknown";
+    const actLabel = session.activity ? ` · ${session.activity.label}` : "";
     const title = session.name || session.id;
     const dockerHint = session.runtime === "docker" ? " · docker" : "";
-    tab.title = `${title} · ${session.backend}${dockerHint} (${session.id})`;
-    tab.innerHTML = `<span class="tab-content"><span class="tab-title">${escapeHtml(title)}${escapeHtml(dockerHint ? " · docker" : "")}</span><span class="tab-meta">${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(activity)}</span></span><span class="tab-close" title="Close session">×</span>`;
+    tab.title = `${title} · ${session.backend}${dockerHint}${actLabel} (${session.id})`;
+    tab.innerHTML = `${activityIconSvg(actState)}<span class="tab-content"><span class="tab-title">${escapeHtml(title)}${escapeHtml(dockerHint ? " · docker" : "")}</span><span class="tab-meta">${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(actLabel)}</span></span><span class="tab-close" title="Close session">×</span>`;
     tab.onclick = () => {
       if (session.id !== activeId) send("session.switch", { session_id: session.id });
     };
@@ -1186,6 +1221,78 @@ els.message.addEventListener("keydown", event => {
     if (chooseSelectedSuggestion()) event.preventDefault();
   }
 });
+
+// ── Training capture: label the live terminal state ──────────────────────────
+const CAPTURE_LABELS = ["idle", "thinking", "streaming", "awaiting-selection", "unknown"];
+let toastTimer = null;
+
+function showToast(message, kind = "info") {
+  els.toast.textContent = message;
+  els.toast.className = `toast toast-${kind}`;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.add("hidden"), 4200);
+}
+
+function buildCaptureLabels() {
+  els.captureLabels.replaceChildren(...CAPTURE_LABELS.map(label => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `capture-label activity-${label}`;
+    btn.textContent = label;
+    btn.onclick = () => captureWith(label);
+    return btn;
+  }));
+}
+
+function openCapturePop() {
+  const sessionId = state.app?.active_session_id;
+  if (!sessionId) return;
+  els.capturePop.classList.remove("hidden");
+  els.captureNotes.value = "";
+  // Let the user type a note without the live terminal swallowing keystrokes.
+  setTimeout(() => els.captureNotes.focus(), 0);
+}
+
+function closeCapturePop() {
+  els.capturePop.classList.add("hidden");
+}
+
+function captureWith(label) {
+  const sessionId = state.app?.active_session_id;
+  if (!sessionId) return;
+  closeCapturePop();
+  showToast(`Capturing "${label}"…`, "info");
+  send("train.capture", { session_id: sessionId, label, notes: els.captureNotes.value.trim() });
+}
+
+function handleCaptured(data) {
+  if (!data.ok) {
+    showToast(`Capture failed: ${data.error || "unknown error"}`, "error");
+    return;
+  }
+  const verdict = data.matches
+    ? `yikes agreed (${data.predicted})`
+    : `yikes had predicted ${data.predicted}`;
+  showToast(`Saved ${data.frames} frame(s) as "${data.label}" — ${verdict}`, data.matches ? "ok" : "warn");
+}
+
+els.captureBtn.addEventListener("click", () => {
+  if (els.capturePop.classList.contains("hidden")) openCapturePop();
+  else closeCapturePop();
+});
+els.captureCancel.addEventListener("click", closeCapturePop);
+// Global hotkey (Ctrl+Alt+L) — capture phase so it fires even while the live
+// terminal has focus and would otherwise swallow the keystroke.
+document.addEventListener("keydown", event => {
+  if (event.ctrlKey && event.altKey && (event.key === "l" || event.key === "L")) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.app?.active_session_id) openCapturePop();
+  } else if (event.key === "Escape" && !els.capturePop.classList.contains("hidden")) {
+    closeCapturePop();
+  }
+}, true);
+buildCaptureLabels();
 
 setupTerminal();
 fetch("/api/state").then(resp => resp.json()).then(render).catch(() => {});
