@@ -122,13 +122,10 @@ Full documentation lives in [`docs/`](docs) (architecture, CLI reference, tmux l
 ## Development
 
 ```bash
-poetry install                       # runtime + dev dependencies
-git config core.hooksPath .githooks  # block accidental commits of raw captures
-poetry run pytest -q
-poetry run mkdocs build --strict
+poetry install && poetry run pytest -q
 ```
 
-End-to-end tests that invoke real Claude Code, Codex, Docker, or tmux are opt-in (marked `integration`) because they depend on local credentials and may spend API credits.
+See [`docs/development.md`](docs/development.md) for the full contributor setup (git hooks, integration tests, docs, and the release flow).
 
 ---
 

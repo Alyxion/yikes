@@ -86,6 +86,7 @@ nav:
   - Embedding: embedding.md
   - OpenHort Parity: openhort-parity.md
   - CLI Wrapper: cli-wrapper.md
+  - Development: development.md
   - Roadmap: roadmap.md
   - Changes:
       - OpenHort Alignment: changes/openhort-alignment.md
