@@ -11,7 +11,6 @@ from threading import RLock
 from typing import Any
 
 from .activity import TerminalActivity
-from .commands import CommandSuggestion
 from .domain import AgentSettings, Backend, ChatOptions, Complexity, Driver, DriverMode, ExecutionLocation
 from .errors import YikesError
 from .drivers import ensure_interactive_session

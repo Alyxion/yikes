@@ -206,7 +206,8 @@ def capture_sample(
     last_plain = strip_ansi(captured[-1]) if captured else ""
     predicted = activity.classify_terminal_snapshot(last_plain).state
 
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+    captured_at = now or datetime.now(timezone.utc)
+    stamp = captured_at.strftime("%Y%m%dT%H%M%SZ")
     short = re.sub(r"[^A-Za-z0-9_-]+", "", target.session_id)[:12] or "session"
     out_dir = training_dir() / "samples" / target.backend / f"{stamp}__{label}__{short}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -219,7 +220,7 @@ def capture_sample(
 
     meta = {
         "schema": 1,
-        "captured_at": (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z"),
+        "captured_at": captured_at.isoformat().replace("+00:00", "Z"),
         "label": label,
         "predicted": predicted,
         "predicted_matches_label": predicted == label,

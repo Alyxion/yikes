@@ -1334,14 +1334,12 @@ def _wait_for_tmux_result(
 ) -> str:
     deadline = time.monotonic() + timeout
     last = ""
-    stable_since = time.monotonic()
     while time.monotonic() < deadline:
         screen = _capture_tmux(socket_path, session_name, cwd=cwd)
         if _marked_result_count(screen, markers) >= min_count:
             return screen
         if screen != last:
             last = screen
-            stable_since = time.monotonic()
         time.sleep(0.5)
     raise BackendRunError(f"tmux interactive {session_name} turn did not complete within {timeout}s", stdout=last, stderr="")
 
@@ -1661,14 +1659,12 @@ def _wait_for_container_tmux_result(
 ) -> str:
     deadline = time.monotonic() + timeout
     last = ""
-    stable_since = time.monotonic()
     while time.monotonic() < deadline:
         screen = _capture_container_tmux(sandbox, socket_path, session_name)
         if _marked_result_count(screen, markers) >= min_count:
             return screen
         if screen != last:
             last = screen
-            stable_since = time.monotonic()
         time.sleep(0.5)
     raise BackendRunError(f"container tmux interactive {session_name} turn did not complete within {timeout}s", stdout=last, stderr="")
 

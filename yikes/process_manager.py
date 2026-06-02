@@ -11,8 +11,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 
 
 @dataclass
