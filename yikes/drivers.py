@@ -36,6 +36,13 @@ if False:  # pragma: no cover
     from .chatbot import Backend, Driver
 
 
+def _yikes_version() -> str:
+    """Package version for the MCP clientInfo (single source: yikes.__version__)."""
+    from . import __version__
+
+    return __version__
+
+
 @dataclass(frozen=True)
 class ResultMarkers:
     start: str
@@ -1797,7 +1804,7 @@ async def _codex_ws_turn(
             ws,
             "initialize",
             {
-                "clientInfo": {"name": "yikes", "version": "0.1.7"},
+                "clientInfo": {"name": "yikes", "version": _yikes_version()},
                 "capabilities": {"experimentalApi": True},
             },
         )
