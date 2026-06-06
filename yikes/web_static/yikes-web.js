@@ -31,6 +31,13 @@ const state = {
   activeWebKey: "",
   renderedPaneBarKey: "",
   dataTimer: null,
+  speaker: null,           // last server-reported speaker public state
+  speakerPopOpen: false,
+  speakerRenderKey: "",
+  speakingAudio: null,     // active <audio> element, if any
+  speaking: false,
+  voice: { open: false, chips: [], rec: null, recording: false, active: false, cancelled: false, transcript: "", lastInterim: "", autoAccept: false, button: null, openedByPress: false, engine: "browser", startPromise: null },
+  voicePending: {},        // req_id -> resolver for voice.interpret round-trips
 };
 
 const els = {
@@ -39,6 +46,26 @@ const els = {
   links: document.getElementById("links"),
   tabs: document.getElementById("tabs"),
   viewToggle: document.getElementById("view-toggle"),
+  speakerBtn: document.getElementById("speaker-btn"),
+  speakerCfg: document.getElementById("speaker-cfg"),
+  speakerPop: document.getElementById("speaker-pop"),
+  speakerFields: document.getElementById("speaker-fields"),
+  speakerStatus: document.getElementById("speaker-status"),
+  speakerClose: document.getElementById("speaker-close"),
+  speakerStop: document.getElementById("speaker-stop"),
+  speakViz: document.getElementById("speak-viz"),
+  speakWave: document.getElementById("speak-wave"),
+  speakText: document.getElementById("speak-text"),
+  voicePanel: document.getElementById("voice-panel"),
+  voiceClose: document.getElementById("voice-close"),
+  voicePtt: document.getElementById("voice-ptt"),
+  voiceWave: document.getElementById("voice-wave"),
+  voiceInterim: document.getElementById("voice-interim"),
+  voiceChips: document.getElementById("voice-chips"),
+  voiceSend: document.getElementById("voice-send"),
+  voiceClear: document.getElementById("voice-clear"),
+  voiceAuto: document.getElementById("voice-auto"),
+  voiceStatus: document.getElementById("voice-status"),
   captureBtn: document.getElementById("capture-btn"),
   capturePop: document.getElementById("capture-pop"),
   captureLabels: document.getElementById("capture-labels"),
@@ -132,6 +159,26 @@ function send(type, payload = {}) {
   state.ws.send(JSON.stringify({ type, ...payload }));
 }
 
+// Open a link clicked in the terminal. Local files (file:// or an absolute
+// image path) are served by the authenticated /file endpoint; the browser can't
+// open file:// directly. Everything else opens in a new tab.
+const IMAGE_PATH_RE = /\.(?:png|jpe?g|gif|webp|bmp|svg|avif|tiff?|ico)$/i;
+function openTerminalLink(uri) {
+  if (!uri) return;
+  let path = null;
+  if (uri.startsWith("file://")) {
+    try { path = decodeURIComponent(uri.replace(/^file:\/\/(localhost)?/i, "")); }
+    catch (_err) { path = uri.replace(/^file:\/\/(localhost)?/i, ""); }
+  } else if (uri.startsWith("/") && IMAGE_PATH_RE.test(uri)) {
+    path = uri;
+  }
+  if (path) {
+    window.open(`/file?path=${encodeURIComponent(path)}`, "_blank", "noopener");
+    return;
+  }
+  if (/^https?:\/\//i.test(uri)) window.open(uri, "_blank", "noopener");
+}
+
 function setupTerminal() {
   state.term = new Terminal({
     cursorBlink: true,
@@ -142,6 +189,12 @@ function setupTerminal() {
     drawBoldTextInBrightColors: false,
     scrollback: 10000,
     convertEol: true,
+    // OSC 8 hyperlinks (e.g. Claude/Codex "[Image #N]" file links): route local
+    // images through the cookie-protected /file endpoint; open http(s) normally.
+    linkHandler: {
+      allowNonHttpProtocols: true,
+      activate: (_event, uri) => openTerminalLink(uri),
+    },
     theme: {
       background: "#0b0e14",
       foreground: "#eff4ff",
@@ -159,7 +212,31 @@ function setupTerminal() {
   });
   state.fit = new FitAddon.FitAddon();
   state.term.loadAddon(state.fit);
-  state.term.loadAddon(new WebLinksAddon.WebLinksAddon());
+  state.term.loadAddon(new WebLinksAddon.WebLinksAddon((_event, uri) => openTerminalLink(uri)));
+  // Make visible absolute image paths clickable even if the OSC 8 escape was
+  // stripped on the way out (older agents, or tmux without passthrough).
+  try {
+    state.term.registerLinkProvider({
+      provideLinks(lineNumber, callback) {
+        const lineObj = state.term.buffer.active.getLine(lineNumber - 1);
+        if (!lineObj) { callback(undefined); return; }
+        const text = lineObj.translateToString(true);
+        const re = /(\/[^\s'"`<>|]+\.(?:png|jpe?g|gif|webp|bmp|svg|avif|tiff?|ico))/gi;
+        const links = [];
+        let m;
+        while ((m = re.exec(text))) {
+          const start = m.index + 1, end = start + m[0].length;
+          const path = m[0];
+          links.push({
+            range: { start: { x: start, y: lineNumber }, end: { x: end - 1, y: lineNumber } },
+            text: path,
+            activate: () => openTerminalLink("file://" + path),
+          });
+        }
+        callback(links.length ? links : undefined);
+      },
+    });
+  } catch (_err) { /* registerLinkProvider unavailable — http links still work */ }
   if (window.WebglAddon) {
     try {
       const webgl = new WebglAddon.WebglAddon();
@@ -241,6 +318,12 @@ function handleMessage(message) {
     state.creatingSession = false;
     render(message.state);
   }
+  if (message.type === "speaker.say") handleSpeak(message);
+  if (message.type === "speaker.notice") showToast(message.message || "Speaker mode paused.", "warn");
+  if (message.type === "voice.interpret.result" || message.type === "voice.utterance.result") {
+    const resolve = state.voicePending[message.req_id];
+    if (resolve) { delete state.voicePending[message.req_id]; resolve(message); }
+  }
   if (message.type === "suggestions") renderSuggestions(message.items || []);
   if (message.type === "train.captured") handleCaptured(message.data || {});
   if (message.type === "dir.entries") renderDirectory(message.data);
@@ -286,6 +369,7 @@ function render(next) {
   renderStatus(next.status, next.active_session_activity);
   renderTabs(next.sessions, next.active_session_id);
   renderViewToggle(next.output_view);
+  renderSpeaker(next);
   renderWizard(next.pending_new);
   renderLinks(next.links || []);
   const noSession = !next.has_active_session && !next.pending_new;
@@ -971,6 +1055,11 @@ function connectTerminal(terminalId) {
   const rows = state.term ? state.term.rows : 34;
   state.termWs = new WebSocket(`${protocol}//${location.host}/ws/terminal/${terminalId}?cols=${cols}&rows=${rows}`);
   state.termWs.binaryType = "arraybuffer";
+  // One streaming decoder per socket: a multi-byte char (e.g. the 3-byte box
+  // drawing ─) split across two websocket frames must NOT decode to U+FFFD (the
+  // "egg"/� replacement glyph). stream:true holds the partial bytes until the
+  // next frame completes them.
+  const termDecoder = new TextDecoder();
   state.termWs.onopen = () => {
     state.pendingTerminalOpen = null;
     state.retriedTerminalOpen = false;
@@ -981,7 +1070,7 @@ function connectTerminal(terminalId) {
   };
   state.termWs.onmessage = event => {
     if (!state.term || !(event.data instanceof ArrayBuffer)) return;
-    state.term.write(new TextDecoder().decode(event.data));
+    state.term.write(termDecoder.decode(event.data, { stream: true }));
   };
   state.termWs.onclose = () => {
     state.termWs = null;
@@ -1222,6 +1311,798 @@ els.message.addEventListener("keydown", event => {
   }
 });
 
+// ── Flying buttons: draggable floating controls ──────────────────────────────
+// Reusable base for circular controls that float over a container. A short press
+// is a "press" (push-to-talk); moving past a threshold turns it into a drag that
+// repositions the button and CANCELS the press. Position persists per storageKey.
+class FlyingButton {
+  constructor({ id, container, icon, title, storageKey, dragThreshold = 8, onPressStart, onPressEnd, onPressCancel }) {
+    this.container = container;
+    this.storageKey = storageKey;
+    this.dragThreshold = dragThreshold;
+    this.cb = { onPressStart, onPressEnd, onPressCancel };
+    this.pressing = false;
+    this.dragging = false;
+    this.el = document.createElement("button");
+    this.el.id = id;
+    this.el.type = "button";
+    this.el.className = "flying-btn";
+    this.el.title = title || "";
+    this.el.innerHTML = icon;
+    container.appendChild(this.el);
+    this._restore();
+    this.el.addEventListener("pointerdown", e => this._down(e));
+    // Keep the button reachable: re-clamp into view whenever the window resizes.
+    window.addEventListener("resize", () => this.clampIntoView());
+    requestAnimationFrame(() => this.clampIntoView());
+  }
+
+  setIcon(html) { this.el.innerHTML = html; }
+  setActive(on) { this.el.classList.toggle("recording", !!on); }
+  setHidden(hidden) { this.el.style.display = hidden ? "none" : ""; }
+
+  // Ensure a dragged (left/top positioned) button stays fully inside the
+  // container — so a window resize can never strand it off-screen.
+  clampIntoView() {
+    if (this.el.style.left === "" && this.el.style.top === "") return;  // still anchored
+    const cr = this.container.getBoundingClientRect();
+    const w = this.el.offsetWidth, h = this.el.offsetHeight;
+    if (!cr.width || !w) return;
+    let left = parseFloat(this.el.style.left);
+    let top = parseFloat(this.el.style.top);
+    if (!Number.isFinite(left)) left = cr.width - w - 20;
+    if (!Number.isFinite(top)) top = cr.height - h - 20;
+    left = Math.max(0, Math.min(left, Math.max(0, cr.width - w)));
+    top = Math.max(0, Math.min(top, Math.max(0, cr.height - h)));
+    this.el.style.left = `${left}px`;
+    this.el.style.top = `${top}px`;
+    this.el.style.right = "auto";
+    this.el.style.bottom = "auto";
+  }
+
+  _down(e) {
+    if (e.button && e.button !== 0) return;
+    e.preventDefault();
+    try { this.el.setPointerCapture(e.pointerId); } catch (_err) { /* ignore */ }
+    const rect = this.el.getBoundingClientRect();
+    this.pressing = true;
+    this.dragging = false;
+    this.start = { x: e.clientX, y: e.clientY, offX: e.clientX - rect.left, offY: e.clientY - rect.top };
+    this._move = ev => this._onMove(ev);
+    this._up = ev => this._onUp(ev);
+    window.addEventListener("pointermove", this._move);
+    window.addEventListener("pointerup", this._up);
+    window.addEventListener("pointercancel", this._up);
+    this.cb.onPressStart && this.cb.onPressStart();
+  }
+
+  _onMove(e) {
+    if (!this.pressing) return;
+    const dx = e.clientX - this.start.x;
+    const dy = e.clientY - this.start.y;
+    if (!this.dragging && Math.hypot(dx, dy) > this.dragThreshold) {
+      this.dragging = true;
+      this.el.classList.add("dragging");
+      this.cb.onPressCancel && this.cb.onPressCancel();   // dragging cancels push-to-talk
+    }
+    if (this.dragging) {
+      const cr = this.container.getBoundingClientRect();
+      const w = this.el.offsetWidth, h = this.el.offsetHeight;
+      const left = Math.max(0, Math.min(e.clientX - cr.left - this.start.offX, cr.width - w));
+      const top = Math.max(0, Math.min(e.clientY - cr.top - this.start.offY, cr.height - h));
+      this.el.style.left = `${left}px`;
+      this.el.style.top = `${top}px`;
+      this.el.style.right = "auto";
+      this.el.style.bottom = "auto";
+    }
+  }
+
+  _onUp() {
+    if (!this.pressing) return;
+    this.pressing = false;
+    window.removeEventListener("pointermove", this._move);
+    window.removeEventListener("pointerup", this._up);
+    window.removeEventListener("pointercancel", this._up);
+    if (this.dragging) {
+      this.dragging = false;
+      this.el.classList.remove("dragging");
+      this._save();
+    } else {
+      this.cb.onPressEnd && this.cb.onPressEnd();
+    }
+  }
+
+  _save() {
+    try {
+      const r = this.el.getBoundingClientRect();
+      const cr = this.container.getBoundingClientRect();
+      localStorage.setItem(this.storageKey, JSON.stringify({ left: r.left - cr.left, top: r.top - cr.top }));
+    } catch (_err) { /* ignore */ }
+  }
+
+  _restore() {
+    try {
+      const p = JSON.parse(localStorage.getItem(this.storageKey) || "null");
+      if (p) {
+        this.el.style.left = `${p.left}px`;
+        this.el.style.top = `${p.top}px`;
+        this.el.style.right = "auto";
+        this.el.style.bottom = "auto";
+      }
+    } catch (_err) { /* ignore */ }
+  }
+}
+
+// ── Voice input: push-to-talk; the LLM routes each utterance ─────────────────
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const VOICE_ICON_IDLE = "🗣️";
+const VOICE_ICON_REC = "🔴";
+const USER_WAVE_COLOR = "rgba(106, 176, 255, .95)";
+
+// Shared AudioContext, resumed on a user gesture so playback/analysers work
+// despite the browser autoplay policy.
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx) {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (_err) { return null; }
+  }
+  if (_audioCtx.state === "suspended") _audioCtx.resume().catch(() => {});
+  return _audioCtx;
+}
+window.addEventListener("pointerdown", () => getAudioCtx(), { passive: true });
+window.addEventListener("keydown", () => getAudioCtx(), { passive: true });
+
+function blobToBase64(blob) {
+  return new Promise(resolve => {
+    const r = new FileReader();
+    r.onloadend = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = () => resolve("");
+    r.readAsDataURL(blob);
+  });
+}
+
+// Microphone capture for OpenAI transcription (reliable on short utterances)
+// plus a real waveform of the user's voice.
+const MicRecorder = {
+  stream: null, recorder: null, source: null, analyser: null, chunks: [], mime: "",
+  async start() {
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const ctx = getAudioCtx();
+    if (ctx) {
+      try {
+        this.source = ctx.createMediaStreamSource(this.stream);
+        this.analyser = ctx.createAnalyser();
+        this.analyser.fftSize = 1024;
+        this.source.connect(this.analyser);   // analyser only — NOT destination (no echo)
+      } catch (_err) { this.analyser = null; }
+    }
+    this.mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
+      .find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+    this.chunks = [];
+    this.recorder = this.mime ? new MediaRecorder(this.stream, { mimeType: this.mime }) : new MediaRecorder(this.stream);
+    this.recorder.ondataavailable = e => { if (e.data && e.data.size) this.chunks.push(e.data); };
+    this.recorder.start();
+  },
+  stopAndGet() {
+    return new Promise(resolve => {
+      const rec = this.recorder;
+      if (!rec || rec.state === "inactive") { this._teardown(); resolve(null); return; }
+      rec.onstop = async () => {
+        const type = (this.mime || "audio/webm").split(";")[0];
+        const blob = new Blob(this.chunks, { type });
+        this._teardown();
+        if (!blob.size) { resolve(null); return; }
+        resolve({ b64: await blobToBase64(blob), mime: blob.type || "audio/webm" });
+      };
+      try { rec.stop(); } catch (_err) { this._teardown(); resolve(null); }
+    });
+  },
+  cancel() {
+    const rec = this.recorder;
+    if (rec && rec.state !== "inactive") { rec.onstop = () => this._teardown(); try { rec.stop(); } catch (_err) { this._teardown(); } }
+    else this._teardown();
+  },
+  _teardown() {
+    if (this.stream) { try { this.stream.getTracks().forEach(t => t.stop()); } catch (_err) { /* ignore */ } this.stream = null; }
+    try { if (this.source) this.source.disconnect(); } catch (_err) { /* ignore */ }
+    this.source = null; this.analyser = null; this.recorder = null; this.chunks = [];
+  },
+};
+
+function whisperAvailable() {
+  return !!(state.speaker && state.speaker.stt_active === "openai")
+    && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+    && typeof window.MediaRecorder !== "undefined";
+}
+
+function voiceActiveSession() {
+  const app = state.app;
+  return (app && (app.sessions || []).find(s => s.id === app.active_session_id)) || null;
+}
+
+function voiceUsesTerminal() {
+  const session = voiceActiveSession();
+  return !!session && (session.runtime === "tmux" || session.runtime === "docker");
+}
+
+function voiceSendInput(payload) {
+  const session = voiceActiveSession();
+  if (!session) return false;
+  send("term.input", { session_id: session.id, ...payload });
+  return true;
+}
+
+// Type text and confirm with Enter in one shot (server sends text then Enter).
+function voiceSendAndEnter(text) {
+  if (!text) return;
+  if (voiceUsesTerminal()) voiceSendInput({ text, key: "accept" });
+  else if (!els.composer.classList.contains("hidden")) { els.message.value = text; els.composer.requestSubmit(); }
+}
+
+function setVoiceStatus(message) {
+  els.voiceStatus.textContent = message || "";
+}
+
+function openVoicePanel() {
+  state.voice.open = true;
+  els.voicePanel.classList.remove("hidden");
+  // Note: the floating button is hidden only once a press ends (see stopPTT),
+  // so hiding it never interrupts its own in-progress press/drag.
+}
+
+function hideVoicePanel() {
+  state.voice.open = false;
+  els.voicePanel.classList.add("hidden");
+  if (state.voice.button) state.voice.button.setHidden(false);
+}
+
+function closeVoicePanel() {   // explicit close (× / Escape) — discard any recording
+  state.voice.active = false;
+  state.voice.cancelled = true;
+  if (state.voice.engine === "openai") MicRecorder.cancel();
+  else stopRecording(true);
+  userWave.stop();
+  els.voiceWave.classList.add("hidden");
+  setRecordingUI(false);
+  state.voice.transcript = "";
+  hideVoicePanel();
+}
+
+// Send recorded audio to the server for OpenAI transcription + intent routing.
+function sendUtterance(b64, mime) {
+  return new Promise(resolve => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) { resolve({ mode: "dictate", text: "", transcript: "", error: "not connected" }); return; }
+    const reqId = `u${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    state.voicePending[reqId] = resolve;
+    const session = voiceActiveSession();
+    send("voice.utterance", { req_id: reqId, audio: b64, mime, session_id: session && session.id });
+    setTimeout(() => {
+      if (state.voicePending[reqId]) { delete state.voicePending[reqId]; resolve({ mode: "dictate", text: "", transcript: "", error: "timeout" }); }
+    }, 25000);
+  });
+}
+
+// Ask the server (LLM) whether an utterance is dictation or a control command.
+function interpretVoice(transcript) {
+  return new Promise(resolve => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) { resolve({ mode: "dictate", text: transcript }); return; }
+    const reqId = `v${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    state.voicePending[reqId] = resolve;
+    const session = voiceActiveSession();
+    send("voice.interpret", { req_id: reqId, transcript, session_id: session && session.id });
+    setTimeout(() => {
+      if (state.voicePending[reqId]) { delete state.voicePending[reqId]; resolve({ mode: "dictate", text: transcript }); }
+    }, 8000);
+  });
+}
+
+function ensureRecognizer() {
+  if (!SpeechRec) return null;
+  if (state.voice.rec) return state.voice.rec;
+  const rec = new SpeechRec();
+  rec.lang = navigator.language || "en-US";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.onresult = event => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const r = event.results[i];
+      if (r.isFinal) state.voice.transcript += (state.voice.transcript ? " " : "") + r[0].transcript.trim();
+      else interim += r[0].transcript;
+    }
+    // Remember the latest non-empty interim: short utterances often release
+    // before a final result lands, so we fall back to this so nothing is lost.
+    if (interim.trim()) state.voice.lastInterim = interim.trim();
+    els.voiceInterim.textContent = (state.voice.transcript + " " + interim).trim();
+  };
+  rec.onerror = event => {
+    if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+      state.voice.recording = false;   // stop the keep-alive restart loop
+      setVoiceStatus("Microphone blocked — allow mic access for this site, then hold again.");
+    } else if (event.error !== "no-speech" && event.error !== "aborted") {
+      setVoiceStatus(`Mic: ${event.error}`);
+    }
+  };
+  rec.onend = () => {
+    // Chrome ends the recognizer on a short silence even with continuous=true.
+    // While the button is still held, restart it so the whole hold is captured;
+    // only finalize once the user has released (recording === false).
+    if (state.voice.recording) {
+      try { rec.start(); } catch (_err) { /* transitioning — ignore */ }
+      return;
+    }
+    finishPTT();
+  };
+  state.voice.rec = rec;
+  return rec;
+}
+
+function stopRecording(abort) {
+  state.voice.recording = false;
+  resetPTTButton();
+  const rec = state.voice.rec;
+  if (!rec) return;
+  try { if (abort) rec.abort(); else rec.stop(); } catch (_err) { /* not running */ }
+}
+
+function startPTT() {
+  state.voice.openedByPress = !state.voice.open;   // remember if THIS press opened it
+  openVoicePanel();
+  els.voiceInterim.textContent = "";
+  state.voice.cancelled = false;
+  state.voice.active = true;        // a capture session is in flight (finalize once)
+  setRecordingUI(true);
+  els.voiceWave.classList.remove("hidden");
+  setVoiceStatus("Listening — release to send…");
+  if (whisperAvailable()) {
+    state.voice.engine = "openai";
+    // getUserMedia is async (and may prompt) — kick it off; stopPTT awaits it.
+    state.voice.startPromise = MicRecorder.start().then(() => {
+      if (state.voice.cancelled) { MicRecorder.cancel(); return; }
+      userWave.start(MicRecorder.analyser, USER_WAVE_COLOR);   // real mic waveform
+    }).catch(() => {
+      state.voice.engine = "browser";
+      setVoiceStatus("Mic unavailable — using browser speech.");
+      startBrowserPTT();
+    });
+  } else {
+    state.voice.engine = "browser";
+    startBrowserPTT();
+  }
+}
+
+function startBrowserPTT() {
+  userWave.start(null, USER_WAVE_COLOR);   // synthetic (no audio access)
+  if (!SpeechRec) { setVoiceStatus("Speech recognition isn't available in this browser."); return; }
+  if (!window.isSecureContext) { setVoiceStatus("Voice needs https or localhost — mic is blocked on this origin."); return; }
+  const rec = ensureRecognizer();
+  state.voice.transcript = "";
+  state.voice.lastInterim = "";
+  state.voice.recording = true;
+  try { rec.start(); }
+  catch (_err) { try { rec.abort(); rec.start(); } catch (_e2) { setVoiceStatus("Mic busy — release and try again."); } }
+}
+
+async function stopPTT() {            // released without dragging → process the utterance
+  if (!state.voice.active) { setRecordingUI(false); return; }
+  setRecordingUI(false);
+  userWave.stop();
+  els.voiceWave.classList.add("hidden");
+  if (state.voice.button && state.voice.open) state.voice.button.setHidden(true);  // talk via the panel now
+  if (state.voice.engine === "openai") {
+    await (state.voice.startPromise || Promise.resolve());
+    if (state.voice.cancelled) { state.voice.active = false; state.voice.cancelled = false; return; }
+    setVoiceStatus("Transcribing…");
+    const audio = await MicRecorder.stopAndGet();
+    state.voice.active = false;
+    if (!audio || !audio.b64) { setVoiceStatus("Didn't catch anything — hold and speak clearly."); return; }
+    const res = await sendUtterance(audio.b64, audio.mime);
+    if (res.error && !res.transcript) { setVoiceStatus(`Speech error: ${res.error}`); return; }
+    routeVoiceResult(res, res.transcript || "");
+  } else {
+    stopRecording(false);        // onend → finishPTT (captures the final result)
+    setTimeout(() => { if (state.voice.active) finishPTT(); }, 700);
+  }
+}
+
+function cancelPTT() {          // a drag started → discard the recording
+  state.voice.cancelled = true;
+  setRecordingUI(false);
+  userWave.stop();
+  els.voiceWave.classList.add("hidden");
+  if (state.voice.engine === "openai") { MicRecorder.cancel(); state.voice.active = false; }
+  else { stopRecording(true); setTimeout(() => { if (state.voice.active) finishPTT(); }, 300); }
+  // If this very press opened the panel, it was a drag (not a talk) — close it.
+  if (state.voice.openedByPress) { state.voice.openedByPress = false; hideVoicePanel(); }
+  else setVoiceStatus("Cancelled — dragging.");
+}
+
+function setRecordingUI(on) {
+  if (state.voice.button) { state.voice.button.setActive(on); state.voice.button.setIcon(on ? VOICE_ICON_REC : VOICE_ICON_IDLE); }
+  els.voicePtt.classList.toggle("recording", on);
+}
+const resetPTTButton = () => setRecordingUI(false);   // browser-path helper
+
+function finishPTT() {   // browser (SpeechRecognition) path only
+  if (!state.voice.active) return;   // finalize exactly once per hold
+  state.voice.active = false;
+  els.voiceInterim.textContent = "";
+  if (state.voice.cancelled) { state.voice.cancelled = false; state.voice.transcript = ""; state.voice.lastInterim = ""; return; }
+  const transcript = (state.voice.transcript.trim() || state.voice.lastInterim || "").trim();
+  state.voice.transcript = "";
+  state.voice.lastInterim = "";
+  if (!transcript) { setVoiceStatus("Didn't catch anything — hold the button and speak clearly."); return; }
+  processUtterance(transcript);
+}
+
+async function processUtterance(transcript) {   // browser path: classify then route
+  setVoiceStatus("Interpreting…");
+  const res = await interpretVoice(transcript);
+  routeVoiceResult(res, transcript);
+}
+
+// Act on an interpreted utterance (shared by the OpenAI and browser paths).
+function routeVoiceResult(res, transcript) {
+  if (res.mode === "command") {
+    if (res.action === "accept") { voiceSendInput({ key: "accept" }); setVoiceStatus(`Voice → Accept · “${transcript}”`); }
+    else if (res.action === "escape") { voiceSendInput({ key: "escape" }); setVoiceStatus(`Voice → Escape · “${transcript}”`); }
+    else if (res.action === "select" && res.value) { voiceSendInput({ text: String(res.value) }); setVoiceStatus(`Voice → option ${res.value} · “${transcript}”`); }
+    else setVoiceStatus(`Heard “${transcript}” — no action.`);
+    return;
+  }
+  const text = (res.text || transcript || "").trim();
+  if (!text) { setVoiceStatus("Didn't catch anything — hold and speak clearly."); return; }
+  if (state.voice.autoAccept) {
+    voiceSendAndEnter(text);
+    setVoiceStatus(`Sent: “${text}”`);
+  } else {
+    addVoiceChip(text);
+    setVoiceStatus(`Added “${text}” — press Send ⏎.`);
+  }
+}
+
+function addVoiceChip(text) {
+  state.voice.chips.push(text);
+  renderVoiceChips();
+}
+
+function removeVoiceChip(index) {
+  state.voice.chips.splice(index, 1);
+  renderVoiceChips();
+}
+
+function renderVoiceChips() {
+  els.voiceChips.replaceChildren(...state.voice.chips.map((text, index) => {
+    const chip = document.createElement("span");
+    chip.className = "voice-chip";
+    const label = document.createElement("span");
+    label.textContent = text;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "voice-chip-x";
+    remove.textContent = "×";
+    remove.title = "Remove utterance";
+    remove.onclick = () => removeVoiceChip(index);
+    chip.append(label, remove);
+    return chip;
+  }));
+  els.voiceSend.disabled = state.voice.chips.length === 0;
+  els.voiceClear.disabled = state.voice.chips.length === 0;
+}
+
+function sendVoiceChips() {
+  const text = state.voice.chips.join(" ").trim();
+  if (!text) return;
+  voiceSendAndEnter(text);
+  setVoiceStatus(`Sent: “${text}”`);
+  state.voice.chips = [];
+  renderVoiceChips();
+}
+
+// In-panel hold-to-talk button (the floating one is hidden while the panel is open).
+let _voicePttHeld = false;
+els.voicePtt.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  try { els.voicePtt.setPointerCapture(e.pointerId); } catch (_err) { /* ignore */ }
+  _voicePttHeld = true;
+  startPTT();
+});
+const _voicePttRelease = () => {
+  if (!_voicePttHeld) return;
+  _voicePttHeld = false;
+  stopPTT();
+};
+els.voicePtt.addEventListener("pointerup", _voicePttRelease);
+els.voicePtt.addEventListener("pointercancel", _voicePttRelease);
+
+els.voiceClose.addEventListener("click", closeVoicePanel);
+els.voiceSend.addEventListener("click", sendVoiceChips);
+els.voiceClear.addEventListener("click", () => { state.voice.chips = []; renderVoiceChips(); });
+state.voice.autoAccept = localStorage.getItem("yikes.voice.autoAccept") === "1";
+els.voiceAuto.checked = state.voice.autoAccept;
+els.voiceAuto.addEventListener("change", () => {
+  state.voice.autoAccept = els.voiceAuto.checked;
+  localStorage.setItem("yikes.voice.autoAccept", state.voice.autoAccept ? "1" : "0");
+});
+renderVoiceChips();
+
+// Create the draggable push-to-talk button over the terminal.
+state.voice.button = new FlyingButton({
+  id: "voice-btn",
+  container: els.terminalPanel,
+  icon: VOICE_ICON_IDLE,
+  title: "Hold to talk · drag to move",
+  storageKey: "yikes.voice.btnpos",
+  dragThreshold: 11,
+  onPressStart: startPTT,
+  onPressEnd: stopPTT,
+  onPressCancel: cancelPTT,
+});
+
+// ── Speaker mode: spoken summaries ───────────────────────────────────────────
+const SPEAKER_FIELDS = [
+  { key: "volume", label: "Volume", type: "range", min: 0, max: 1, step: 0.05, full: true, pct: true },
+  { key: "tts_engine", label: "Voice (output)", options: ["auto", "openai", "browser"] },
+  { key: "stt_engine", label: "Mic (input)", options: ["auto", "openai", "browser"] },
+  { key: "llm_provider", label: "Model provider", options: ["auto", "anthropic", "openai"] },
+  { key: "voice", label: "OpenAI voice", options: ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] },
+  { key: "use_complex", label: "Upgrade wording", options: ["on", "off"], bool: true },
+  { key: "max_words", label: "Max words", type: "number" },
+  { key: "cooldown_seconds", label: "Cooldown (s)", type: "number" },
+];
+
+function speakerOnFor(sessionId) {
+  const list = (state.speaker && state.speaker.enabled_sessions) || [];
+  return !!sessionId && list.includes(sessionId);
+}
+
+function renderSpeaker(next) {
+  state.speaker = next.speaker || null;
+  const active = next.active_session_id || "";
+  const available = !!(state.speaker && state.speaker.available);
+  const on = speakerOnFor(active);
+  els.speakerBtn.disabled = !active || !available;
+  els.speakerBtn.classList.toggle("active", on);
+  els.speakerBtn.textContent = on ? "🔊" : "🔈";
+  if (!available) {
+    els.speakerBtn.title = "Speaker mode needs a Claude or OpenAI API key.";
+  } else if (!active) {
+    els.speakerBtn.title = "Select a session to narrate.";
+  } else {
+    const engine = state.speaker.tts_active === "openai" ? "OpenAI voice" : "browser voice";
+    els.speakerBtn.title = on ? `Speaker on (${engine}) — click to mute this tab` : "Speak a summary when this tab settles";
+  }
+  if (state.speakerPopOpen) renderSpeakerFields();
+}
+
+function toggleSpeaker() {
+  const active = state.app && state.app.active_session_id;
+  if (!active) return;
+  const on = speakerOnFor(active);
+  if (on) stopSpeaking();
+  send("speaker.toggle", { session_id: active, enabled: !on });
+}
+
+function openSpeakerPop() {
+  if (!state.speaker) return;
+  state.speakerPopOpen = true;
+  state.speakerRenderKey = "";
+  els.speakerPop.classList.remove("hidden");
+  renderSpeakerFields();
+}
+
+function closeSpeakerPop() {
+  state.speakerPopOpen = false;
+  els.speakerPop.classList.add("hidden");
+}
+
+function renderSpeakerFields() {
+  const sp = state.speaker;
+  if (!sp) return;
+  const cfg = sp.config || {};
+  const providers = sp.providers || {};
+  const key = JSON.stringify({ cfg, providers, tts: sp.tts_active, err: sp.error });
+  if (key === state.speakerRenderKey) return;
+  state.speakerRenderKey = key;
+  const detected = Object.entries(providers).filter(([, v]) => v).map(([k]) => k);
+  els.speakerStatus.textContent = detected.length
+    ? `Keys: ${detected.join(" + ")} · speaking via ${sp.tts_active === "openai" ? "OpenAI" : "browser"}`
+    : "No Claude or OpenAI key found — speaker mode is unavailable.";
+  els.speakerStatus.classList.toggle("warn", !detected.length || !!sp.error);
+  if (sp.error) els.speakerStatus.textContent += ` · ${sp.error}`;
+  els.speakerFields.replaceChildren(...SPEAKER_FIELDS.map(field => {
+    const wrap = document.createElement("label");
+    wrap.className = `speaker-field${field.full ? " full" : ""}`;
+    const title = document.createElement("span");
+    title.textContent = field.label;
+    let input;
+    if (field.options) {
+      input = document.createElement("select");
+      for (const opt of field.options) {
+        const o = document.createElement("option");
+        o.value = opt;
+        o.textContent = opt;
+        input.append(o);
+      }
+      input.value = field.bool ? (cfg[field.key] ? "on" : "off") : String(cfg[field.key]);
+    } else {
+      input = document.createElement("input");
+      input.type = field.type || "text";
+      if (field.min !== undefined) input.min = field.min;
+      if (field.max !== undefined) input.max = field.max;
+      if (field.step !== undefined) input.step = field.step;
+      input.value = cfg[field.key];
+    }
+    if (field.pct) {
+      title.textContent = `${field.label} — ${Math.round(Number(cfg[field.key]) * 100)}%`;
+      input.oninput = () => { title.textContent = `${field.label} — ${Math.round(Number(input.value) * 100)}%`; };
+    }
+    input.onchange = () => {
+      state.speakerRenderKey = "";
+      send("speaker.config", { changes: { [field.key]: input.value } });
+    };
+    wrap.append(title, input);
+    return wrap;
+  }));
+}
+
+function handleSpeak(message) {
+  const text = String(message.text || "").trim();
+  if (!text) return;
+  speak(text, message);
+}
+
+function speak(text, opts = {}) {
+  stopSpeaking();
+  if (opts.audio) {
+    try {
+      const audio = new Audio(`data:${opts.mime || "audio/mpeg"};base64,${opts.audio}`);
+      audio.volume = clampVolume(opts.volume);
+      state.speakingAudio = audio;
+      // Play the element directly — the reliable, audible path. (The AI wave is
+      // animated synthetically so audio is never routed through a context that
+      // could be silent.)
+      setSpeaking(true, text);
+      audio.onended = audio.onerror = () => setSpeaking(false);
+      audio.play().catch(() => { setSpeaking(false); browserSpeak(text, opts); });
+      return;
+    } catch (_err) {
+      // fall through to browser speech
+    }
+  }
+  browserSpeak(text, opts);
+}
+
+function clampVolume(value) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return 0.8;
+  return Math.max(0, Math.min(1, v));
+}
+
+let _browserSpeakTimer = null;
+function browserSpeak(text, opts = {}) {
+  if (!("speechSynthesis" in window)) { setSpeaking(false); return; }
+  try {
+    const utter = new SpeechSynthesisUtterance(text);
+    const rate = Number(opts.rate) || 1.0;
+    utter.rate = rate;
+    utter.volume = clampVolume(opts.volume);
+    const done = () => { clearTimeout(_browserSpeakTimer); setSpeaking(false); };
+    utter.onend = utter.onerror = done;
+    setSpeaking(true, text);
+    window.speechSynthesis.cancel();   // clear any stuck queue first
+    window.speechSynthesis.speak(utter);
+    // Chrome's onend is unreliable (often never fires) — stop after an estimated
+    // duration so the indicator always finishes.
+    const words = Math.max(1, text.trim().split(/\s+/).length);
+    clearTimeout(_browserSpeakTimer);
+    _browserSpeakTimer = setTimeout(done, Math.min(60000, 2000 + (words / 2.6) * 1000 / rate));
+  } catch (_err) {
+    setSpeaking(false);
+  }
+}
+
+function stopSpeaking() {
+  if (state.speakingAudio) {
+    try { state.speakingAudio.pause(); } catch (_err) { /* ignore */ }
+    state.speakingAudio = null;
+  }
+  if ("speechSynthesis" in window) {
+    try { window.speechSynthesis.cancel(); } catch (_err) { /* ignore */ }
+  }
+  setSpeaking(false);
+}
+
+// ── Waveform visualizer (real audio when available, else synthetic) ──────────
+class Waveform {
+  constructor(canvas, color) {
+    this.canvas = canvas;
+    this.color = color || "rgba(94, 225, 162, .9)";
+    this.raf = 0;
+    this.frame = 0;
+    this.analyser = null;
+  }
+  start(analyser, color) {
+    this.analyser = analyser || null;
+    if (color) this.color = color;
+    this.frame = 0;
+    cancelAnimationFrame(this.raf);
+    this._loop();
+  }
+  stop() {
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    this.analyser = null;
+    const x = this.canvas && this.canvas.getContext("2d");
+    if (x) x.clearRect(0, 0, this.canvas.width, this.canvas.height);
+  }
+  _loop() {
+    const c = this.canvas;
+    const x = c && c.getContext("2d");
+    if (!x) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = (c.width = Math.max(1, c.offsetWidth * dpr));
+    const H = (c.height = Math.max(1, c.offsetHeight * dpr));
+    const mid = H / 2;
+    x.clearRect(0, 0, W, H);
+    x.beginPath();
+    if (this.analyser) {
+      const n = this.analyser.fftSize;
+      const data = new Uint8Array(n);
+      this.analyser.getByteTimeDomainData(data);
+      const sw = W / n;
+      for (let i = 0; i < n; i++) {
+        const v = (data[i] - 128) / 128;
+        let y = mid - v * mid * 1.6;
+        y = Math.max(1, Math.min(H - 1, y));
+        i ? x.lineTo(i * sw, y) : x.moveTo(0, y);
+      }
+    } else {
+      const n = 64, sw = W / n, t = (this.frame++) / 7;
+      for (let i = 0; i < n; i++) {
+        const env = Math.sin((i / n) * Math.PI);
+        const v = env * 0.72 * Math.sin(i * 0.6 + t) * Math.sin(t * 0.7 + i * 0.15);
+        const y = mid - v * mid;
+        i ? x.lineTo(i * sw, y) : x.moveTo(0, y);
+      }
+    }
+    x.strokeStyle = this.color;
+    x.lineWidth = 2 * dpr;
+    x.lineJoin = "round";
+    x.stroke();
+    this.raf = requestAnimationFrame(() => this._loop());
+  }
+}
+
+const aiWave = new Waveform(els.speakWave, "rgba(94, 225, 162, .9)");        // agent speaking (green)
+const userWave = new Waveform(els.voiceWave, "rgba(106, 176, 255, .95)");    // user talking (blue)
+
+let _speakBackstop = null;
+function setSpeaking(on, text) {
+  state.speaking = on;
+  els.speakViz.classList.toggle("hidden", !on);
+  clearTimeout(_speakBackstop);
+  _speakBackstop = null;
+  if (on) {
+    if (text !== undefined) els.speakText.textContent = text || "";
+    aiWave.start();
+    // Hard backstop: the indicator must never get stuck "playing" even if an
+    // onended/onend event never arrives (a known browser-speech failure mode).
+    _speakBackstop = setTimeout(() => stopSpeaking(), 90000);
+  } else {
+    aiWave.stop();
+  }
+}
+
+els.speakerBtn.addEventListener("click", toggleSpeaker);
+els.speakerCfg.addEventListener("click", () => {
+  if (state.speakerPopOpen) closeSpeakerPop();
+  else openSpeakerPop();
+});
+els.speakerClose.addEventListener("click", closeSpeakerPop);
+els.speakerStop.addEventListener("click", stopSpeaking);
+
 // ── Training capture: label the live terminal state ──────────────────────────
 const CAPTURE_LABELS = ["idle", "thinking", "streaming", "awaiting-selection", "unknown"];
 let toastTimer = null;
@@ -1290,6 +2171,9 @@ document.addEventListener("keydown", event => {
     if (state.app?.active_session_id) openCapturePop();
   } else if (event.key === "Escape" && !els.capturePop.classList.contains("hidden")) {
     closeCapturePop();
+  } else if (event.key === "Escape" && (state.speaking || state.speakerPopOpen)) {
+    stopSpeaking();
+    closeSpeakerPop();
   }
 }, true);
 buildCaptureLabels();

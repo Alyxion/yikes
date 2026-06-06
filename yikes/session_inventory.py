@@ -394,6 +394,34 @@ class SessionLifecycle:
             )
         return text
 
+    def send_input(
+        self, session_id: str, *, text: str | None = None, keys: tuple[str, ...] = ()
+    ) -> bool:
+        """Send literal text and/or named tmux keys to a live tmux session.
+
+        Works for host and Docker tmux sessions by injecting into the pane with
+        ``tmux send-keys`` — the same channel a human typing into the attached
+        terminal uses, so it drives Claude and Codex identically and regardless
+        of whether a browser terminal happens to be attached.
+        """
+        if not text and not keys:
+            return False
+        session_id = self.resolve_session_id(session_id) or session_id
+        durable = DurableSessionManager(self.runtime_store).get(session_id)
+        if durable is not None and durable.runtime.kind is RuntimeKind.TMUX and durable.runtime.tmux_socket:
+            base = ["tmux", "-S", durable.runtime.tmux_socket, "send-keys"]
+            cwd = str(durable.cwd) if durable.cwd else None
+            return _send_keys(base, durable.runtime.tmux_session, text, keys, cwd=cwd)
+        sandbox = SandboxManager(self.sandbox_store).get(session_id)
+        if sandbox is None:
+            return False
+        socket = sandbox.meta.user_data.get("tmux_socket")
+        session = sandbox.meta.user_data.get("tmux_session")
+        if not socket or not session:
+            return False
+        base = ["docker", "exec", sandbox.container_name, "tmux", "-S", socket, "send-keys"]
+        return _send_keys(base, session, text, keys, cwd=None)
+
     def capture_markers(self, session_id: str) -> tuple[tuple[str, str], ...]:
         session_id = self.resolve_session_id(session_id) or session_id
         durable = DurableSessionManager(self.runtime_store).get(session_id)
@@ -814,6 +842,29 @@ def _capture_output(cmd: list[str]) -> str | None:
         return None
     text = result.stdout.strip()
     return text or None
+
+
+def _send_keys(
+    base: list[str], target: str | None, text: str | None, keys: tuple[str, ...], *, cwd: str | None
+) -> bool:
+    """Run ``send-keys`` for literal text (``-l``) then each named key in order."""
+    target_flag = ["-t", target] if target else []
+    ok = True
+    invocations: list[list[str]] = []
+    if text:
+        invocations.append([*base, *target_flag, "-l", "--", text])
+    for key in keys:
+        invocations.append([*base, *target_flag, key])
+    for cmd in invocations:
+        try:
+            result = subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=cwd, timeout=10, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            ok = False
+            continue
+        ok = ok and result.returncode == 0
+    return ok
 
 
 def _should_auto_accept_workspace_prompt(user_data: dict[str, str], cwd: Path) -> bool:

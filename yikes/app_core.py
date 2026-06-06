@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Callable
 
 from .activity import TerminalActivity
 from .domain import AgentSettings, Backend, ChatOptions, Complexity, Driver, DriverMode, ExecutionLocation
@@ -95,6 +95,9 @@ class YikesAppController:
         self.output_service = SessionOutputService()
         self.prompt_profile = load_prompt_profile()
         self.process_manager = None  # set by the web layer; manages pane processes
+        # Set by the web layer to expose speaker-mode status in state(); the
+        # service itself lives in the web layer because it owns asyncio tasks.
+        self.speaker_public: Callable[[], dict[str, Any]] | None = None
         self._restore_latest_session()
 
     def state(self) -> dict[str, Any]:
@@ -128,6 +131,7 @@ class YikesAppController:
                 "pending_new": self.pending_new.to_json() if self.pending_new else None,
                 "submission_active": self.submission_active,
                 "developer": _is_developer(),
+                "speaker": self.speaker_public() if self.speaker_public else None,
                 "error": error,
             }
 
@@ -474,6 +478,30 @@ class YikesAppController:
         if command is None:
             return None
         return selected, command
+
+    # Map spoken/clicked confirm actions to tmux key names. Digits are sent as
+    # literal text (a hotkey in Claude/Codex menus), so they are not listed here.
+    _INPUT_KEYS = {"accept": "Enter", "enter": "Enter", "escape": "Escape", "up": "Up", "down": "Down"}
+
+    def send_terminal_input(
+        self, session_id: str | None, *, text: str | None = None, key: str | None = None
+    ) -> bool:
+        """Inject dictated text and/or a confirm key into a live tmux session.
+
+        Used by web voice input: dictation inserts literal text (never followed
+        by Enter), while Accept/Escape map to tmux keys. Returns whether the
+        session accepted the input (False for non-tmux sessions).
+        """
+        selected = (session_id or self.active_session_id or "").strip()
+        if not selected:
+            return False
+        keys: tuple[str, ...] = ()
+        if key:
+            mapped = self._INPUT_KEYS.get(str(key).strip().lower())
+            if mapped is None:
+                return False
+            keys = (mapped,)
+        return self.lifecycle.send_input(selected, text=text, keys=keys)
 
     def resize_terminal(self, session_id: str | None, *, cols: int, rows: int) -> dict[str, Any]:
         selected = session_id or self._attachable_session_id()

@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.100",
+    "httpx>=0.27",
     "llming-com>=0.1.7",
     "llming-stage>=0.1.1",
     "rich>=14",

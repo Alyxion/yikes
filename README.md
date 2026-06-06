@@ -73,7 +73,9 @@ See the [CLI reference](docs/cli-wrapper.md) for the full command surface, Docke
 
 Each session tab carries **panes** (sub-tabs): the live terminal, an embedded view of the **web app the agent is building** (a full browser bar with reload, history, and a load/unload toggle), auto-refreshing **health/status tables**, and sidebar links. Panes are declared per project in `yikes.toml` `[[panes]]` — by port, never a hardcoded host — or added at runtime with the **＋ web** button. A pane with a `start` command gets a Start/Stop control so yikes can run the dev server for you.
 
-See the [Web UI docs](docs/cli-wrapper.md#web-ui-yikes-web) and [Session panes](docs/cli-wrapper.md#session-panes-sub-tabs).
+Each tab also has a **🔊 speaker mode**: a per-tab toggle that speaks a short summary when that agent finishes, asks a question, or errors — so you can look away and still know when it needs you. It detects "done/waiting" automatically, never speaks mid-task or repeats itself, and works with a Claude or OpenAI key (OpenAI voice when available, browser voice otherwise). A draggable **🗣 push-to-talk** button over the terminal closes the loop: hold to talk, and a fast model decides whether you dictated text (collected as removable chips) or gave a command — "accept", "option two", "cancel" — which it executes as keystrokes for Claude or Codex.
+
+See the [Web UI docs](docs/cli-wrapper.md#web-ui-yikes-web), [Session panes](docs/cli-wrapper.md#session-panes-sub-tabs), and [Speaker mode](docs/speaker-mode.md).
 
 ---
 

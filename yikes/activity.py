@@ -69,8 +69,12 @@ class ActivityMonitor:
     def observe(self, session_id: str, snapshot: str | None, *, now: float | None = None) -> TerminalActivity:
         current_time = time.time() if now is None else now
         normalized = _normalize(snapshot or "")
-        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-        nonblank_lines = sum(1 for line in normalized.splitlines() if line.strip())
+        # Change/streak detection runs on text with the user's typed input in the
+        # bottom prompt box collapsed, so typing a message is not mistaken for the
+        # agent streaming output.
+        stable = _input_collapsed(normalized)
+        digest = hashlib.sha256(stable.encode("utf-8")).hexdigest()
+        nonblank_lines = sum(1 for line in stable.splitlines() if line.strip())
         previous = self._observations.get(session_id)
         changed = previous is not None and previous.digest != digest
 
@@ -137,11 +141,30 @@ def _normalize(text: str) -> str:
     return "\n".join(line.rstrip() for line in without_ansi.replace("\r\n", "\n").replace("\r", "\n").splitlines())
 
 
+# A Claude/Codex input prompt line near the bottom: an optional box border, then
+# the prompt marker (>, ❯, ›), then the text the user is typing. We collapse the
+# typed text to just the marker so editing the prompt is not seen as a change.
+_INPUT_PROMPT = re.compile(r"^(\s*(?:[│|┃▌▏]\s*)?[>❯›])(\s.*)?$")
+
+
+def _input_collapsed(normalized: str) -> str:
+    lines = normalized.splitlines()
+    for index in range(max(0, len(lines) - 4), len(lines)):
+        lines[index] = _INPUT_PROMPT.sub(r"\1", lines[index])
+    return "\n".join(lines)
+
+
 def _looks_like_selection_prompt(text: str) -> bool:
-    lower = text.lower()
+    # A real Claude/Codex selection menu lives in the live prompt region at the
+    # bottom of the screen (just above the input footer), not in scrollback.
+    # Restricting to the tail avoids false positives from the agent's own
+    # numbered prose ("1. …", "2. …") and incidental words like "allow"/"select"
+    # that scroll by earlier in a long, otherwise-idle transcript.
+    tail = "\n".join(text.splitlines()[-15:])
+    lower = tail.lower()
     # Real menu choices: a single small number at the very start of a line (with
     # an optional cursor marker) — not "(from line 80)" buried in prose/code.
-    choice_count = len(re.findall(r"(?m)^\s*(?:[›>❯•]\s*)?[1-9][.)]\s+\S", text))
+    choice_count = len(re.findall(r"(?m)^\s*(?:[›>❯•]\s*)?[1-9][.)]\s+\S", tail))
     strong_phrases = (
         "do you trust",
         "do you want",

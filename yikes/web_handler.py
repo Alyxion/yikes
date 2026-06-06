@@ -10,9 +10,15 @@ from .terminal_bridge import WebTerminalManager
 class WebMessageHandler:
     """Own websocket command dispatch for the browser control surface."""
 
-    def __init__(self, controller: YikesAppController, terminals: WebTerminalManager) -> None:
+    def __init__(
+        self,
+        controller: YikesAppController,
+        terminals: WebTerminalManager,
+        speaker: Any | None = None,
+    ) -> None:
         self.controller = controller
         self.terminals = terminals
+        self.speaker = speaker
 
     async def handle(self, message: dict[str, Any]) -> dict[str, Any]:
         msg_type = str(message.get("type", "state"))
@@ -98,24 +104,72 @@ class WebMessageHandler:
             if msg_type == "term.close":
                 self.terminals.close(str(message.get("terminal_id", "")))
                 return {"type": "state", "state": self.controller.state()}
+            if msg_type == "term.input":
+                ok = self.controller.send_terminal_input(
+                    _optional_text(message.get("session_id")),
+                    text=_optional_text(message.get("text")),
+                    key=_optional_text(message.get("key")),
+                )
+                return {"type": "term.input.ack", "ok": ok}
+            if msg_type == "voice.interpret":
+                transcript = str(message.get("transcript", ""))
+                if self.speaker is not None:
+                    result = await self.speaker.interpret_voice(transcript)
+                else:
+                    result = {"mode": "dictate", "text": transcript}
+                return {"type": "voice.interpret.result", "req_id": message.get("req_id"), **result}
+            if msg_type == "speaker.toggle":
+                if self.speaker is not None:
+                    self.speaker.set_enabled(
+                        str(message.get("session_id", "")), bool(message.get("enabled", False))
+                    )
+                return {"type": "state", "state": self.controller.state()}
+            if msg_type == "speaker.config":
+                changes = message.get("changes", {})
+                if self.speaker is not None and isinstance(changes, dict) and changes:
+                    self.speaker.update_config(**changes)
+                return {"type": "state", "state": self.controller.state()}
         except Exception as exc:
             state = self.controller.state()
             state["error"] = str(exc)
             return {"type": "state", "state": state}
         return {"type": "error", "message": f"Unknown message type: {msg_type}"}
 
-    async def stream_submit(self, websocket: Any, message: dict[str, Any]) -> None:
+    async def interpret_voice(self, sink: Any, message: dict[str, Any]) -> None:
+        """Run voice intent classification off the receive loop (it calls an LLM).
+
+        Done as a background task so a ~1s model call never blocks other
+        messages (state polls, further utterances) on the same connection.
+        """
+        transcript = str(message.get("transcript", ""))
+        if self.speaker is not None:
+            result = await self.speaker.interpret_voice(transcript)
+        else:
+            result = {"mode": "dictate", "text": transcript}
+        await sink.send_json({"type": "voice.interpret.result", "req_id": message.get("req_id"), **result})
+
+    async def transcribe_voice(self, sink: Any, message: dict[str, Any]) -> None:
+        """Transcribe recorded audio (OpenAI) and route it — off the receive loop."""
+        audio = str(message.get("audio", ""))
+        mime = str(message.get("mime", "audio/webm"))
+        if self.speaker is not None:
+            result = await self.speaker.transcribe_and_interpret(audio, mime)
+        else:
+            result = {"transcript": "", "mode": "dictate", "text": ""}
+        await sink.send_json({"type": "voice.utterance.result", "req_id": message.get("req_id"), **result})
+
+    async def stream_submit(self, sink: Any, message: dict[str, Any]) -> None:
         text = str(message.get("text", ""))
         started = self.controller.begin_submit(text)
-        await websocket.send_json({"type": "state", "state": self.controller.state()})
+        await sink.send_json({"type": "state", "state": self.controller.state()})
         if not started:
             return
         task = asyncio.create_task(asyncio.to_thread(self.controller.finish_submit))
         while not task.done():
             await asyncio.sleep(0.4)
-            await websocket.send_json({"type": "state", "state": self.controller.state()})
+            await sink.send_json({"type": "state", "state": self.controller.state()})
         state = await task
-        await websocket.send_json({"type": "state", "state": state})
+        await sink.send_json({"type": "state", "state": state})
 
     def _open_terminal(self, message: dict[str, Any]) -> dict[str, Any]:
         attached = self.controller.attach_command(_optional_text(message.get("session_id")))

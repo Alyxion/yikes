@@ -84,6 +84,7 @@ nav:
   - Activity & Training: activity-training.md
   - Python Library: python-library.md
   - Embedding: embedding.md
+  - Speaker Mode: speaker-mode.md
   - OpenHort Parity: openhort-parity.md
   - CLI Wrapper: cli-wrapper.md
   - Development: development.md

@@ -793,6 +793,349 @@ button:hover {
 .toast-warn { border-color: #f7c969; color: #ffe5a3; }
 .toast-error { border-color: #c93655; color: #ffc2cf; }
 
+/* Speaker mode controls */
+.topbar-actions {
+  display: flex;
+  align-items: stretch;
+  justify-self: end;
+}
+
+.icon-button:disabled {
+  opacity: .38;
+  cursor: not-allowed;
+}
+
+#speaker-btn.active {
+  color: #b8ffd8;
+  border-color: #5ee1a2;
+  background: rgba(94, 225, 162, .12);
+}
+
+.speaker-pop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, .48);
+}
+
+.speaker-card {
+  width: min(440px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 22px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .45);
+}
+
+.speaker-card h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.speaker-status {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.speaker-status.warn { color: #ffe5a3; }
+
+.speaker-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.speaker-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.speaker-field select,
+.speaker-field input {
+  padding: 8px 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d1117;
+  color: var(--text, #e9edf3);
+  font: inherit;
+}
+
+.speaker-field.full {
+  grid-column: 1 / -1;
+}
+
+.speaker-field input[type="range"] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  accent-color: #5ee1a2;
+}
+
+.speaker-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Speaking visualizer: floating waveform bar while the agent talks */
+.speak-viz {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 10px 12px 10px 14px;
+  border: 1px solid #2f7de1;
+  border-radius: 16px;
+  background: rgba(15, 18, 24, .96);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, .6), 0 0 22px rgba(94, 225, 162, .25);
+}
+
+.speak-wave {
+  width: 120px;
+  height: 30px;
+  flex: 0 0 auto;
+}
+
+.speak-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 540px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #cfe9d9;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.speak-stop {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #11151b;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.speak-stop:hover { color: #ffc2cf; border-color: #c93655; }
+
+/* In-panel hold-to-talk button (floating button is hidden while panel is open) */
+.voice-ptt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid #2f7de1;
+  border-radius: 10px;
+  background: linear-gradient(#1f6fe0, #1a5fc0);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.voice-ptt:hover { filter: brightness(1.08); }
+
+.voice-ptt .voice-ptt-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #bfe0ff;
+}
+
+.voice-wave {
+  width: 100%;
+  height: 40px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.voice-ptt.recording {
+  border-color: #ff5c78;
+  background: linear-gradient(#c93655, #a02a45);
+  animation: flying-pulse 1s ease-in-out infinite;
+}
+
+.voice-ptt.recording .voice-ptt-dot { background: #fff; }
+
+/* Flying buttons: draggable floating controls over the terminal */
+.flying-btn {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 6;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: 2px solid #bfe0ff;
+  background: radial-gradient(circle at 32% 28%, #6ab0ff, #1f6fe0 70%);
+  color: #fff;
+  font-size: 25px;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .6), 0 0 0 4px rgba(47, 125, 225, .28), 0 0 18px rgba(106, 176, 255, .55);
+}
+
+.flying-btn:hover { filter: brightness(1.1); }
+.flying-btn:active,
+.flying-btn.dragging { cursor: grabbing; }
+.flying-btn.dragging { opacity: .92; box-shadow: 0 4px 14px rgba(0, 0, 0, .6); }
+.flying-btn.recording {
+  border-color: #ff5c78;
+  background: radial-gradient(circle at 30% 28%, #ff6b86, #c93655);
+  animation: flying-pulse 1s ease-in-out infinite;
+}
+
+@keyframes flying-pulse {
+  0%, 100% { box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 0 rgba(255, 92, 120, .5); }
+  50% { box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 10px rgba(255, 92, 120, 0); }
+}
+
+.voice-hint { font-size: 11px; color: var(--muted); line-height: 1.45; margin-bottom: 10px; }
+.voice-auto { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.voice-auto input { accent-color: #5ee1a2; }
+
+.voice-panel {
+  position: absolute;
+  right: 20px;
+  bottom: 72px;
+  z-index: 7;
+  width: min(360px, calc(100% - 40px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+  padding: 14px;
+}
+
+.voice-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.voice-head button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.voice-dictate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-record {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11151b;
+  color: #e9edf3;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.voice-record.recording { border-color: #ff5c78; color: #ffc2cf; background: rgba(255, 92, 120, .12); }
+
+.voice-interim {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.voice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #11151b;
+  font-size: 12px;
+}
+
+.voice-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.voice-chip-x {
+  border: 0;
+  background: rgba(255, 255, 255, .08);
+  color: var(--muted);
+  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.voice-actions { display: flex; gap: 8px; }
+.voice-actions button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; background: #11151b; color: #e9edf3; cursor: pointer; }
+.voice-actions button:disabled { opacity: .4; cursor: not-allowed; }
+.voice-actions .primary { background: #2f7de1; border-color: #2f7de1; color: #fff; }
+
+.voice-confirm { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.voice-label { font-size: 12px; color: var(--muted); }
+.voice-confirm-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.voice-confirm-row button {
+  min-width: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11151b;
+  color: #e9edf3;
+  font-weight: 600;
+  cursor: pointer;
+}
+.voice-confirm-row .voice-accept { color: #b8ffd8; border-color: #5ee1a2; }
+.voice-confirm-row .voice-cmd.active { color: #ffe5a3; border-color: #f7c969; background: rgba(247, 201, 105, .12); }
+
+.voice-status { margin-top: 10px; min-height: 16px; font-size: 12px; color: var(--muted); }
+
 /* Phosphor activity icons (inline SVG, currentColor) + working/waiting motion. */
 .act-ico {
   width: 15px;

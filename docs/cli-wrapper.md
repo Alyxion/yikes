@@ -216,6 +216,8 @@ Flags: `--host` (default `0.0.0.0`, all interfaces; use `127.0.0.1` for loopback
 
 **Labeling activity state.** When the top-bar activity reading is wrong, click the **◉** button (or press **Ctrl+Alt+L**) to record what the terminal *actually* shows as a training sample — see [Activity & Training](activity-training.md).
 
+**Image links.** Agents reference pasted/generated images as local file links (e.g. Claude/Codex `[Image #N]`). tmux sessions are created with `allow-passthrough on` and the `hyperlinks` terminal-feature so those OSC 8 links and inline-image escapes survive tmux to native terminals and the web xterm. In the browser, clicking such a link (or a visible absolute image path) opens it through the authenticated **`GET /file?path=…`** endpoint, which streams the image. That route is gated by the **same login cookie** as everything else and only serves existing image files (by MIME/extension, ≤ 50 MB) — it is not a general file-read surface. Browsers can't open `file://` paths directly, which is why the endpoint exists.
+
 **Remote access.** Two ways to reach it from another machine:
 
 - *Same network, direct (default):* the server already listens on all interfaces, so open one of the printed `http://<lan-ip>:<port>/login?key=…` URLs from the other machine. The login key (rate-limited, 256-bit) is the guard; front it with a mesh VPN such as Tailscale if you want it reachable beyond the LAN.

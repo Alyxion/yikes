@@ -128,6 +128,7 @@ Host MCP stdio-to-SSE proxies are only started for enabled MCP servers that need
 - [tmux Layer](tmux-layer.md) and [Streaming & Updates](streaming.md) are the implementation core.
 - [Python Library](python-library.md) and [CLI Wrapper](cli-wrapper.md) describe the public faces.
 - [Embedding](embedding.md) covers Python/web embedding, including iframe-plus-chat editor use cases.
+- [Speaker Mode](speaker-mode.md) covers the web UI's spoken, per-tab session summaries.
 - [OpenHort Parity](openhort-parity.md) tracks what yikes! must own before OpenHort removes duplicated functionality.
 - [Roadmap](roadmap.md) has the phased plan and the open questions we need to resolve before writing code.
 

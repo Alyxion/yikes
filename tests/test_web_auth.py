@@ -121,6 +121,34 @@ def test_index_cache_busts_assets(tmp_path: Path) -> None:
         assert "yikes-web.js?v=" in page.text
 
 
+def test_file_endpoint_is_cookie_protected_and_image_only(tmp_path: Path) -> None:
+    auth = WebAuthConfig(secret="test-secret", login_key="k", developer_mode=True)
+    app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\nfake-image-bytes")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("not an image")
+
+    with TestClient(app) as client:
+        # No cookie → blocked by the same middleware as every other route.
+        anon = client.get(f"/file?path={png}")
+        assert anon.status_code == 401
+
+        login = client.get("/login?key=k", follow_redirects=False)
+        client.cookies.set(auth.cookie_name, login.cookies[auth.cookie_name])
+
+        ok = client.get(f"/file?path={png}")
+        assert ok.status_code == 200
+        assert ok.headers["content-type"].startswith("image/")
+        assert ok.content == png.read_bytes()
+
+        # Authenticated, but non-image and missing files are refused.
+        assert client.get(f"/file?path={secret}").status_code == 415
+        assert client.get(f"/file?path={tmp_path / 'nope.png'}").status_code == 404
+        assert client.get("/file?path=").status_code == 400
+
+
 def test_web_shutdown_stops_pane_processes(tmp_path: Path) -> None:
     auth = WebAuthConfig(secret="test-secret", login_key="k", developer_mode=True)
     app = create_app(YikesAppController(cwd=tmp_path, transport=EchoTransport()), auth=auth, use_stage=False)

@@ -37,6 +37,34 @@ This command wants to edit files.
     assert activity.state == ACTIVITY_AWAITING_SELECTION
 
 
+def test_activity_numbered_prose_in_scrollback_is_not_selection() -> None:
+    # The agent printed a numbered list earlier (scrollback) and the words
+    # "allow"/"select" appear in prose, but the live prompt at the bottom is
+    # idle. The numbered items are well above the live prompt region, so this
+    # must read as idle, not awaiting-selection.
+    scrollback = [
+        "Here is the plan I would select for you:",
+        "  1. Set up the workspace",
+        "  2. Migrate the modules",
+        "  3. Allow incremental rollout",
+        "  4. Optimize the build",
+    ]
+    filler = [f"  done step {n}" for n in range(20)]
+    footer = [
+        "I'm here whenever you want to dive back in — just say the word.",
+        "✻ Crunched for 4s",
+        "─────────────── dynamicslides ──",
+        "❯ clean up the dead studio CSS",
+        "───────────────",
+        "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+    ]
+    snapshot = "\n".join(scrollback + filler + footer)
+
+    activity = classify_terminal_snapshot(snapshot, now=1.0)
+
+    assert activity.state == ACTIVITY_IDLE
+
+
 def test_activity_detects_thinking_indicator() -> None:
     snapshot = """
 > Improve documentation in @filename
@@ -78,6 +106,44 @@ Musing… (3m 20s · ↓ 12.8k tokens)
     activity = classify_terminal_snapshot(snapshot, now=1.0)
 
     assert activity.state == ACTIVITY_THINKING
+
+
+def test_typing_into_input_prompt_is_not_streaming() -> None:
+    # Editing the agent's bottom input box (Claude/Codex) changes the screen, but
+    # it must read as idle — the agent isn't streaming, the user is typing.
+    monitor = ActivityMonitor()
+
+    def screen(typed: str) -> str:
+        return (
+            "Want me to also surface newly-created resources?\n"
+            "* Brewed for 5m 59s\n"
+            "────────────────────\n"
+            f"> {typed}\n"
+            "  auto mode on (shift+tab to cycle)"
+        )
+
+    monitor.observe("s", screen("a"), now=1.0)
+    states = [
+        monitor.observe("s", screen(text), now=2.0 + index).state
+        for index, text in enumerate(["al", "alri", "alrighty", "alrighty!"])
+    ]
+    assert all(state == ACTIVITY_IDLE for state in states), states
+
+
+def test_codex_prompt_typing_is_not_streaming() -> None:
+    monitor = ActivityMonitor()
+
+    def screen(typed: str) -> str:
+        return (
+            "Result: 79 passed. Current worktree is clean.\n"
+            "── Worked for 2m 31s ──\n"
+            f"> {typed}\n"
+            "  gpt-5.5 high · ~/projects/office-connect"
+        )
+
+    monitor.observe("s", screen("a"), now=1.0)
+    states = [monitor.observe("s", screen(t), now=2.0 + i).state for i, t in enumerate(["am", "amaz", "amazing!"])]
+    assert all(state == ACTIVITY_IDLE for state in states), states
 
 
 def test_activity_monitor_detects_streaming_on_sustained_change() -> None:

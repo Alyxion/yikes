@@ -1023,6 +1023,12 @@ def _set_tmux_options(socket_path: Path, cwd: Path, *, title: str | None = None)
         # attach both see the whole pane (no over-wide rows / hidden bottom rows).
         ["set", "-g", "window-size", "smallest"],
         ["setw", "-g", "aggressive-resize", "on"],
+        # Let the agent's image affordances survive tmux: allow-passthrough keeps
+        # iTerm2/Kitty inline-image escapes from being stripped, and advertising
+        # the hyperlinks feature makes tmux forward OSC 8 links (e.g. Claude/Codex
+        # "[Image #N]" file links) to native terminals and the web xterm.
+        ["set", "-g", "allow-passthrough", "on"],
+        ["set", "-as", "terminal-features", "*:hyperlinks"],
     ):
         subprocess.run(["tmux", "-S", str(socket_path), *args], cwd=str(cwd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
