@@ -42,6 +42,13 @@ const state = {
 
 const els = {
   status: document.getElementById("status"),
+  topbar: document.querySelector(".topbar"),
+  topbarActions: document.querySelector(".topbar-actions"),
+  navToggle: document.getElementById("nav-toggle"),
+  navDrawer: document.getElementById("nav-drawer"),
+  navBackdrop: document.getElementById("nav-backdrop"),
+  navClose: document.getElementById("nav-close"),
+  drawerBody: document.getElementById("drawer-body"),
   activityPill: document.getElementById("activity-pill"),
   links: document.getElementById("links"),
   tabs: document.getElementById("tabs"),
@@ -545,14 +552,14 @@ function renderTabs(sessions, activeId) {
   plus.className = "tab new-tab";
   plus.textContent = "+";
   plus.title = "New Session";
-  plus.onclick = () => send("new.open");
+  plus.onclick = () => { closeNavDrawer(); send("new.open"); };
 
   if (!sessions.length) {
     const empty = document.createElement("button");
     empty.className = "tab active";
     empty.style.display = "block";
     empty.innerHTML = "<span class='tab-title'>new session</span><span class='tab-meta'>not connected</span>";
-    empty.onclick = () => send("new.open");
+    empty.onclick = () => { closeNavDrawer(); send("new.open"); };
     els.tabs.replaceChildren(empty, plus);
     return;
   }
@@ -566,6 +573,7 @@ function renderTabs(sessions, activeId) {
     tab.title = `${title} · ${session.backend}${dockerHint}${actLabel} (${session.id})`;
     tab.innerHTML = `${activityIconSvg(actState)}<span class="tab-content"><span class="tab-title">${escapeHtml(title)}${escapeHtml(dockerHint ? " · docker" : "")}</span><span class="tab-meta">${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(actLabel)}</span></span><span class="tab-close" title="Close session">×</span>`;
     tab.onclick = () => {
+      closeNavDrawer();
       if (session.id !== activeId) send("session.switch", { session_id: session.id });
     };
     tab.querySelector(".tab-close").onclick = event => {
@@ -2179,6 +2187,39 @@ document.addEventListener("keydown", event => {
   }
 }, true);
 buildCaptureLabels();
+
+// ── Mobile nav drawer: sessions + controls slide out; top bar stays slim ─────
+function openNavDrawer() {
+  els.navDrawer.classList.remove("hidden");
+  document.body.classList.add("drawer-open");
+}
+function closeNavDrawer() {
+  els.navDrawer.classList.add("hidden");
+  document.body.classList.remove("drawer-open");
+}
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 600px)").matches;
+}
+// On phones the session tabs and action icons live inside the drawer, not the
+// top bar (which keeps only the menu button + logo). Reparent on breakpoint
+// change so all the existing tab/control logic keeps working unchanged.
+function applyResponsiveLayout() {
+  const mobile = isMobileLayout();
+  document.body.classList.toggle("mobile", mobile);
+  if (mobile) {
+    if (els.tabs.parentElement !== els.drawerBody) els.drawerBody.appendChild(els.tabs);
+    if (els.topbarActions.parentElement !== els.drawerBody) els.drawerBody.appendChild(els.topbarActions);
+  } else {
+    closeNavDrawer();
+    if (els.tabs.parentElement !== els.topbar) els.topbar.appendChild(els.tabs);
+    if (els.topbarActions.parentElement !== els.topbar) els.topbar.appendChild(els.topbarActions);
+  }
+}
+els.navToggle.addEventListener("click", () => (els.navDrawer.classList.contains("hidden") ? openNavDrawer() : closeNavDrawer()));
+els.navClose.addEventListener("click", closeNavDrawer);
+els.navBackdrop.addEventListener("click", closeNavDrawer);
+window.matchMedia("(max-width: 600px)").addEventListener("change", applyResponsiveLayout);
+applyResponsiveLayout();
 
 setupTerminal();
 fetch("/api/state").then(resp => resp.json()).then(render).catch(() => {});

@@ -18,6 +18,10 @@
 
       <main class="workspace">
         <div class="topbar">
+          <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Sessions menu">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          </button>
+          <img id="topbar-logo" class="topbar-logo" src="/static/logo.png" alt="yikes!">
           <div id="tabs" class="tabs"></div>
           <div class="topbar-actions">
             <button id="speaker-btn" class="icon-button" type="button" title="Speaker mode: spoken summaries for this tab">🔊</button>
@@ -25,6 +29,16 @@
             <button id="capture-btn" class="icon-button hidden" type="button" title="Label this terminal's state for training (⌃⌥L)">◉</button>
             <button id="view-toggle" class="icon-button" type="button" title="Toggle high-level/dev view">{} </button>
           </div>
+        </div>
+        <div id="nav-drawer" class="nav-drawer hidden">
+          <div id="nav-backdrop" class="nav-backdrop"></div>
+          <aside class="nav-drawer-panel">
+            <div class="nav-drawer-head">
+              <img class="drawer-logo" src="/static/logo.png" alt="yikes!">
+              <button id="nav-close" class="nav-close" type="button" aria-label="Close">×</button>
+            </div>
+            <div id="drawer-body" class="nav-drawer-body"></div>
+          </aside>
         </div>
         <div id="pane-bar" class="pane-bar hidden"></div>
         <section id="web-pane" class="web-pane hidden">
