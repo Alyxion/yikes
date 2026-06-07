@@ -987,35 +987,34 @@ button:hover {
   right: 20px;
   bottom: 20px;
   z-index: 6;
-  width: 56px;
-  height: 56px;
+  width: 52px;
+  height: 52px;
+  padding: 0;
   border-radius: 999px;
-  border: 2px solid #bfe0ff;
-  background: radial-gradient(circle at 32% 28%, #6ab0ff, #1f6fe0 70%);
+  border: 0;
+  background: #2f7de1;          /* flat accent — strong contrast with the white icon */
   color: #fff;
-  font-size: 25px;
-  line-height: 1;
   cursor: grab;
   touch-action: none;
   user-select: none;
   display: grid;
   place-items: center;
-  box-shadow: 0 8px 26px rgba(0, 0, 0, .6), 0 0 0 4px rgba(47, 125, 225, .28), 0 0 18px rgba(106, 176, 255, .55);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+  transition: background .12s ease, transform .08s ease;
 }
 
-.flying-btn:hover { filter: brightness(1.1); }
+.flying-btn svg { width: 24px; height: 24px; display: block; }
+.flying-btn:hover { background: #3b8bf0; }
 .flying-btn:active,
-.flying-btn.dragging { cursor: grabbing; }
-.flying-btn.dragging { opacity: .92; box-shadow: 0 4px 14px rgba(0, 0, 0, .6); }
+.flying-btn.dragging { cursor: grabbing; transform: scale(.95); }
 .flying-btn.recording {
-  border-color: #ff5c78;
-  background: radial-gradient(circle at 30% 28%, #ff6b86, #c93655);
-  animation: flying-pulse 1s ease-in-out infinite;
+  background: #e23b57;
+  animation: flying-pulse 1.1s ease-in-out infinite;
 }
 
 @keyframes flying-pulse {
-  0%, 100% { box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 0 rgba(255, 92, 120, .5); }
-  50% { box-shadow: 0 10px 30px rgba(0, 0, 0, .55), 0 0 0 10px rgba(255, 92, 120, 0); }
+  0%, 100% { box-shadow: 0 6px 18px rgba(0, 0, 0, .45), 0 0 0 0 rgba(226, 59, 87, .55); }
+  50% { box-shadow: 0 6px 18px rgba(0, 0, 0, .45), 0 0 0 12px rgba(226, 59, 87, 0); }
 }
 
 .voice-hint { font-size: 11px; color: var(--muted); line-height: 1.45; margin-bottom: 10px; }
