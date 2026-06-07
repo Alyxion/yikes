@@ -20,9 +20,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cwd = Path(args.cwd).expanduser() if args.cwd else Path.cwd()
+    # Use the same user-global auth store as `yikes web` / the launcher
+    # (~/.yikes/web-auth.env). Reading auth from the project's .env instead made
+    # this entry point sign cookies with a different secret/key, so restarting
+    # via one path logged you out of the other.
     auth = WebAuthConfig.load(
         developer_mode=bool(args.dev),
-        env_path=cwd / ".env",
         persist_auth=bool(args.persistent_auth),
     )
     app = create_app(YikesAppController(cwd=cwd), auth=auth)

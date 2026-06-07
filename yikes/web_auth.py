@@ -12,10 +12,7 @@ from urllib.parse import urlencode
 
 
 COOKIE_NAME = "yikes_web_auth"
-# A local control surface is typically left open for days; a short cookie meant
-# re-logging in constantly. 30 days keeps it convenient (the signing secret is
-# persisted, so restarts don't invalidate it; only this window does).
-DEFAULT_COOKIE_TTL_SECONDS = 30 * 24 * 60 * 60
+DEFAULT_COOKIE_TTL_SECONDS = 12 * 60 * 60
 # User-global auth store: the login key must not depend on the launch directory.
 DEFAULT_WEB_AUTH_ENV = Path.home() / ".yikes" / "web-auth.env"
 
