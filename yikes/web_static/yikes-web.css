@@ -1179,6 +1179,37 @@ button:hover {
   }
 }
 
+/* Phones: keep the controls usable and nothing overflowing/overlapping. */
+@media (max-width: 600px) {
+  /* Tighter top bar so the session tabs keep room beside the action buttons. */
+  .icon-button { width: 34px; min-width: 34px; min-height: 38px; margin: 6px 3px 4px 3px; }
+  .topbar-actions { gap: 0; }
+  .tabs { padding: 6px 8px 0; gap: 4px; -webkit-overflow-scrolling: touch; }
+  /* Drop the secondary "backend · state" line so tab titles aren't truncated. */
+  .tab .tab-meta { display: none; }
+
+  /* Use the full width for the terminal/output. */
+  .terminal-panel { padding: 8px 8px 0; }
+
+  /* Floating voice panel spans the screen instead of a fixed-width card. */
+  .voice-panel { left: 10px; right: 10px; bottom: 12px; width: auto; padding: 16px; }
+
+  /* Keep the push-to-talk button clear of the speaking bar at the bottom. */
+  .flying-btn { bottom: 86px; right: 16px; }
+
+  /* Speaking bar spans the width and clears the screen edge. */
+  .speak-viz { left: 10px; right: 10px; transform: none; max-width: none; bottom: 12px; }
+  .speak-text { max-width: none; }
+
+  /* Settings popovers: single column with comfortable tap targets. */
+  .speaker-fields { grid-template-columns: 1fr; }
+  .speaker-card { padding: 18px; }
+  .voice-actions button,
+  .speaker-actions button,
+  .voice-confirm-row button,
+  .voice-ptt { min-height: 44px; }
+}
+
 body.terminal-exclusive #app {
   grid-template-columns: minmax(0, 1fr);
 }
