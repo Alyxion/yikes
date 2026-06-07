@@ -22,6 +22,7 @@
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
           </button>
           <img id="topbar-logo" class="topbar-logo" src="/static/logo.png" alt="yikes!">
+          <div id="session-rail" class="session-rail"></div>
           <div id="tabs" class="tabs"></div>
           <div class="topbar-actions">
             <button id="speaker-btn" class="icon-button" type="button" title="Speaker mode: spoken summaries for this tab">🔊</button>
@@ -149,6 +150,9 @@
           <canvas id="speak-wave" class="speak-wave"></canvas>
           <span id="speak-text" class="speak-text"></span>
           <button id="speaker-stop" class="speak-stop" type="button" title="Stop speaking (Esc)">✕</button>
+        </div>
+        <div id="emoji-pop" class="emoji-pop hidden">
+          <div class="emoji-pop-grid" id="emoji-pop-grid"></div>
         </div>
         <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
         <form id="composer" class="composer">

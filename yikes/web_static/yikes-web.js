@@ -45,6 +45,9 @@ const els = {
   topbar: document.querySelector(".topbar"),
   topbarActions: document.querySelector(".topbar-actions"),
   navToggle: document.getElementById("nav-toggle"),
+  sessionRail: document.getElementById("session-rail"),
+  emojiPop: document.getElementById("emoji-pop"),
+  emojiPopGrid: document.getElementById("emoji-pop-grid"),
   navDrawer: document.getElementById("nav-drawer"),
   navBackdrop: document.getElementById("nav-backdrop"),
   navClose: document.getElementById("nav-close"),
@@ -375,6 +378,7 @@ function render(next) {
   pruneWebFrames(next);
   renderStatus(next.status, next.active_session_activity);
   renderTabs(next.sessions, next.active_session_id);
+  renderSessionRail(next.sessions, next.active_session_id);
   renderViewToggle(next.output_view);
   renderSpeaker(next);
   renderWizard(next.pending_new);
@@ -547,6 +551,51 @@ function renderActivity(activity) {
   els.activityPill.className = `activity-pill activity-${stateName}`;
 }
 
+// Per-session emoji in a circle whose ring reflects the activity state.
+function sessionBadge(session) {
+  const stateName = session.activity?.state || "unknown";
+  const emoji = session.icon || "🟦";
+  return `<span class="session-badge act-${stateName}"><span class="badge-emoji">${escapeHtml(emoji)}</span></span>`;
+}
+
+// Clicking a badge opens a small emoji picker to re-icon the session.
+const EMOJI_CHOICES = ["🚀","🦊","🐙","🐢","🦉","🦁","🐉","🦄","🐳","🦋","🌵","🍀","🔥","🌙","🍕","🎲","🧩","🎯","🤖","👾","🧠","💡","🔭","🧪","📦","🧭","🌈","🐝","🐬","🦅","🌻","🍄","🐸","🦖","🐧","🦦","🐼","🦓","🦛","🦔","🎧","🎸","☕","🛸"];
+function openEmojiPicker(sessionId, anchorEl) {
+  els.emojiPopGrid.replaceChildren(...EMOJI_CHOICES.map(emoji => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "emoji-choice";
+    b.textContent = emoji;
+    b.onclick = () => { send("session.icon", { session_id: sessionId, emoji }); closeEmojiPicker(); };
+    return b;
+  }));
+  const rect = anchorEl.getBoundingClientRect();
+  els.emojiPop.classList.remove("hidden");
+  const popW = els.emojiPop.offsetWidth || 240;
+  let left = Math.min(rect.left, window.innerWidth - popW - 8);
+  els.emojiPop.style.left = `${Math.max(8, left)}px`;
+  els.emojiPop.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 220)}px`;
+}
+function closeEmojiPicker() { els.emojiPop.classList.add("hidden"); }
+function bindBadgePicker(buttonEl, sessionId) {
+  const badge = buttonEl.querySelector(".session-badge");
+  if (badge) badge.addEventListener("click", e => { e.stopPropagation(); openEmojiPicker(sessionId, badge); });
+}
+
+// Horizontally-scrollable session switcher for the top bar (mobile mainly).
+function renderSessionRail(sessions, activeId) {
+  els.sessionRail.replaceChildren(...(sessions || []).map(session => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `rail-item ${session.id === activeId ? "active" : ""}`;
+    item.title = `${session.name || session.id} · ${session.activity?.label || ""}`.trim();
+    item.innerHTML = sessionBadge(session);
+    item.onclick = () => { if (session.id !== activeId) send("session.switch", { session_id: session.id }); };
+    bindBadgePicker(item, session.id);
+    return item;
+  }));
+}
+
 function renderTabs(sessions, activeId) {
   const plus = document.createElement("button");
   plus.className = "tab new-tab";
@@ -566,16 +615,16 @@ function renderTabs(sessions, activeId) {
   els.tabs.replaceChildren(...sessions.map(session => {
     const tab = document.createElement("button");
     tab.className = `tab ${session.id === activeId ? "active" : ""}`;
-    const actState = session.activity?.state || "unknown";
     const actLabel = session.activity ? ` · ${session.activity.label}` : "";
     const title = session.name || session.id;
     const dockerHint = session.runtime === "docker" ? " · docker" : "";
     tab.title = `${title} · ${session.backend}${dockerHint}${actLabel} (${session.id})`;
-    tab.innerHTML = `${activityIconSvg(actState)}<span class="tab-content"><span class="tab-title">${escapeHtml(title)}${escapeHtml(dockerHint ? " · docker" : "")}</span><span class="tab-meta">${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(actLabel)}</span></span><span class="tab-close" title="Close session">×</span>`;
+    tab.innerHTML = `${sessionBadge(session)}<span class="tab-content"><span class="tab-title">${escapeHtml(title)}${escapeHtml(dockerHint ? " · docker" : "")}</span><span class="tab-meta">${escapeHtml(session.backend)} ${escapeHtml(session.state)}${escapeHtml(actLabel)}</span></span><span class="tab-close" title="Close session">×</span>`;
     tab.onclick = () => {
       closeNavDrawer();
       if (session.id !== activeId) send("session.switch", { session_id: session.id });
     };
+    bindBadgePicker(tab, session.id);
     tab.querySelector(".tab-close").onclick = event => {
       event.stopPropagation();
       send("session.close", { session_id: session.id });
@@ -1275,6 +1324,7 @@ els.webUrl.addEventListener("keydown", e => { if (e.key === "Enter") { e.prevent
 els.tabs.addEventListener("contextmenu", openContextMenu);
 document.addEventListener("click", event => {
   if (!els.contextMenu.contains(event.target)) hideContextMenu();
+  if (!els.emojiPop.contains(event.target) && !event.target.closest(".session-badge")) closeEmojiPicker();
 });
 els.dialogCancel.onclick = () => els.dialog.classList.add("hidden");
 els.dialog.addEventListener("click", event => {
@@ -2198,7 +2248,7 @@ function closeNavDrawer() {
   document.body.classList.remove("drawer-open");
 }
 function isMobileLayout() {
-  return window.matchMedia("(max-width: 600px)").matches;
+  return window.matchMedia("(max-width: 900px)").matches;
 }
 // On phones the session tabs and action icons live inside the drawer, not the
 // top bar (which keeps only the menu button + logo). Reparent on breakpoint
@@ -2218,7 +2268,7 @@ function applyResponsiveLayout() {
 els.navToggle.addEventListener("click", () => (els.navDrawer.classList.contains("hidden") ? openNavDrawer() : closeNavDrawer()));
 els.navClose.addEventListener("click", closeNavDrawer);
 els.navBackdrop.addEventListener("click", closeNavDrawer);
-window.matchMedia("(max-width: 600px)").addEventListener("change", applyResponsiveLayout);
+window.matchMedia("(max-width: 900px)").addEventListener("change", applyResponsiveLayout);
 applyResponsiveLayout();
 
 setupTerminal();

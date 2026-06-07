@@ -56,6 +56,13 @@ class WebMessageHandler:
                 return {"type": "state", "state": self.controller.switch_session(str(message.get("session_id", "")))}
             if msg_type == "session.close":
                 return {"type": "state", "state": self.controller.close_session(str(message.get("session_id", "")))}
+            if msg_type == "session.icon":
+                return {
+                    "type": "state",
+                    "state": self.controller.set_session_icon(
+                        str(message.get("session_id", "")), str(message.get("emoji", ""))
+                    ),
+                }
             if msg_type == "session.close_all":
                 return {"type": "state", "state": self.controller.close_all()}
             if msg_type == "dir.list":
