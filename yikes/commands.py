@@ -278,6 +278,49 @@ def default_command_registry() -> CommandRegistry:
             lines.append(f"{option.name}{marker}{detail}")
         return CommandResult("\n".join(lines))
 
+    def set_command(context: CommandContext, arg: str) -> CommandResult:
+        """One command for all session config updates: /set <key> <value>."""
+        from .session_icons import SessionIcons
+
+        options = context.conversation.options
+        session_id = getattr(options, "session_id", None)
+        arg = arg.strip()
+        if not arg:
+            meta = SessionIcons().meta_for(session_id) if session_id else {}
+            return CommandResult(
+                "Usage: /set <key> <value> — updates any session property. Current:\n"
+                f"  model={options.model or 'default'}  complexity={options.complexity.value}  "
+                f"web={'on' if options.settings.web_search_enabled else 'off'}\n"
+                f"  icon={meta.get('icon', '')}  name={meta.get('name', '(default)')}  "
+                f"description={meta.get('description', '')}"
+            )
+        if "=" in arg.split(None, 1)[0]:
+            key, _, value = arg.partition("=")
+        else:
+            parts = arg.split(None, 1)
+            key, value = parts[0], (parts[1] if len(parts) > 1 else "")
+        key, value = key.strip().lower(), value.strip()
+        # Runtime conversation options.
+        if key == "model":
+            context.conversation.set_model(None if value in ("", "default") else value)
+            return CommandResult(f"model = {value or 'default'}")
+        if key == "complexity":
+            try:
+                context.conversation.set_complexity(Complexity(value.lower()))
+            except ValueError:
+                return CommandResult(f"Unknown complexity: {value}. Valid: {', '.join(c.value for c in Complexity)}.")
+            return CommandResult(f"complexity = {value.lower()}")
+        if key in ("web", "web_search"):
+            on = value.lower() in ("on", "true", "1", "yes")
+            context.conversation.set_web_search(on)
+            return CommandResult(f"web = {'on' if on else 'off'}")
+        # Everything else is a session-record field (icon/name/description/custom).
+        if not session_id:
+            return CommandResult("No active session to configure.")
+        if SessionIcons().set_field(session_id, key, value) is None:
+            return CommandResult("No editable session record for the active session.")
+        return CommandResult(f"{key} = {value or '(cleared)'}")
+
     def status_command(context: CommandContext, _arg: str) -> CommandResult:
         status = context.conversation.status()
         return CommandResult(" | ".join(f"{key}: {value}" for key, value in status.items()))
@@ -669,6 +712,15 @@ def default_command_registry() -> CommandRegistry:
         )
     )
     registry.register(CommandSpec("status", "Show backend, location, driver, model, and message count", status_command))
+    registry.register(
+        CommandSpec(
+            "set",
+            "Update any session property (icon, name, description, model, …)",
+            set_command,
+            usage="<key> <value>",
+            aliases=("config", "cfg"),
+        )
+    )
     registry.register(CommandSpec("sessions", "List known yikes! tmux, Docker, and remote sessions", sessions_command, aliases=("ps",)))
     registry.register(
         CommandSpec(

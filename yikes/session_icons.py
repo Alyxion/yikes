@@ -102,6 +102,33 @@ class SessionIcons:
             return None
         return emoji if self.update(session_id, icon=emoji) is not None else None
 
+    # Friendly aliases → the key actually stored in the record.
+    _FIELD_ALIASES = {"name": NAME_KEY, "icon": ICON_KEY, "description": DESC_KEY, "desc": DESC_KEY}
+
+    def set_field(self, session_id: str, key: str, value: str) -> dict[str, str] | None:
+        """Generic setter for any session-record field (one path for all config).
+
+        Well-known display keys (icon/name/description) are normalized; any other
+        key is written verbatim into the session's user_data. Empty value clears.
+        """
+        session_id = (session_id or "").strip()
+        key = (key or "").strip()
+        if not session_id or not key:
+            return None
+        meta = self._manager.get(session_id)
+        if meta is None:
+            return None
+        stored_key = self._FIELD_ALIASES.get(key.lower(), key)
+        value = (value or "").strip()[:500]
+        if stored_key == ICON_KEY:
+            value = value[:8]
+        if value:
+            meta.user_data[stored_key] = value
+        else:
+            meta.user_data.pop(stored_key, None)
+        self._manager.save(meta)
+        return dict(meta.user_data)
+
     def _assign_icon(self, meta) -> str:
         used = {m.user_data.get(ICON_KEY) for m in self._manager.list() if m.user_data.get(ICON_KEY)}
         available = [emoji for emoji in EMOJI_POOL if emoji not in used] or list(EMOJI_POOL)

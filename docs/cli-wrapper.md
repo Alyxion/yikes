@@ -192,7 +192,8 @@ The current package implements:
 - `yikes tmux wait <name-or-id> --timeout SECONDS`: waits for a named session to become stable or ask a question.
 - `yikes tmux kill <name-or-id>`: kills the tmux session and removes its durable metadata.
 - `yikes token` / `yikes server`: creates hashed bearer tokens and starts the yikes! WebSocket control plane.
-- Shared slash-command registry with autocomplete for `/model`, `/models`, `/backend`, `/location`, `/mode`, `/driver`, `/sessions`, `/switch`, `/close`, `/close-all`, `/complexity`, `/web`, `/dirs`, `/mcp`, `/restart`, and `/exit`.
+- Shared slash-command registry with autocomplete for `/model`, `/models`, `/backend`, `/location`, `/mode`, `/driver`, `/sessions`, `/switch`, `/close`, `/close-all`, `/complexity`, `/web`, `/dirs`, `/mcp`, `/set`, `/restart`, and `/exit`.
+- **`/set <key> <value>`** (aliases `/config`, `/cfg`) is the single command for all session config updates — `model`, `complexity`, `web`, the display `icon`/`name`/`description`, and any other custom key (written into the session's record). One command rather than one per property. Display metadata lives in the session's own durable record (`~/.yikes/sessions/<id>.json`), so it is shared by the TUI and the web UI. In the web UI you can also **right-click a session tab** to edit its icon, name and description in a dialog.
 - Persisted app state in `~/.config/yikes/state.json` covering backend, effective runtime, model, complexity, web search, read/write directories, and MCP servers.
 - The Textual UI exposes backend, location, driver, model, complexity, web-search, session inventory, switch, attach, close, close Docker, close tmux, and close all controls in the left panel.
 
