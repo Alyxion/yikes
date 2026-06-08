@@ -17,6 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cwd", default=None)
     parser.add_argument("--dev", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--persistent-auth", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--tls", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args(argv)
 
     cwd = Path(args.cwd).expanduser() if args.cwd else Path.cwd()
@@ -29,7 +30,14 @@ def main(argv: list[str] | None = None) -> int:
         persist_auth=bool(args.persistent_auth),
     )
     app = create_app(YikesAppController(cwd=cwd), auth=auth)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    ssl_kwargs: dict[str, str] = {}
+    if args.tls:
+        from .web_tls import ensure_cert
+
+        cert = ensure_cert(["127.0.0.1", "localhost"])
+        if cert is not None:
+            ssl_kwargs = {"ssl_certfile": str(cert[0]), "ssl_keyfile": str(cert[1])}
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info", **ssl_kwargs)
     return 0
 
 

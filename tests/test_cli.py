@@ -447,9 +447,18 @@ def test_unknown_command_errors_cleanly(capsys) -> None:
 
 
 def test_web_url_prints_login_url_without_starting(tmp_path, capsys) -> None:
-    assert cli.main(["web", "--url", "--cwd", str(tmp_path), "--host", "127.0.0.1", "--port", "8760"]) == 0
+    # --no-tls keeps the scheme deterministic (http) regardless of openssl.
+    assert cli.main(["web", "--url", "--no-tls", "--cwd", str(tmp_path), "--host", "127.0.0.1", "--port", "8760"]) == 0
     out = capsys.readouterr().out
     assert "http://127.0.0.1:8760/login?key=" in out
+
+
+def test_web_url_uses_https_by_default(tmp_path, capsys) -> None:
+    import shutil
+    if shutil.which("openssl") is None:
+        return
+    assert cli.main(["web", "--url", "--cwd", str(tmp_path), "--host", "127.0.0.1", "--port", "8760"]) == 0
+    assert "https://127.0.0.1:8760/login?key=" in capsys.readouterr().out
 
 
 def test_advertise_and_primary_host(monkeypatch) -> None:
@@ -464,7 +473,7 @@ def test_advertise_and_primary_host(monkeypatch) -> None:
 def test_web_url_on_all_interfaces_prints_lan(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "_lan_ipv4_addresses", lambda: ["10.0.0.5"])
 
-    assert cli.main(["web", "--url", "--host", "0.0.0.0", "--cwd", str(tmp_path), "--port", "8760"]) == 0
+    assert cli.main(["web", "--url", "--no-tls", "--host", "0.0.0.0", "--cwd", str(tmp_path), "--port", "8760"]) == 0
     assert "http://10.0.0.5:8760/login?key=" in capsys.readouterr().out
 
 

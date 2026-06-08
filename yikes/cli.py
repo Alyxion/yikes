@@ -516,6 +516,7 @@ if typer:
         persistent_auth: bool = typer.Option(True, "--persistent-auth/--ephemeral-auth", help="Reuse the local login key across restarts."),
         open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the web UI in the default browser."),
         url_only: bool = typer.Option(False, "--url", help="Print the login URL (with key) and exit; do not start the server."),
+        tls: bool = typer.Option(True, "--tls/--no-tls", help="Serve HTTPS with a self-signed cert (needed for the microphone over the LAN)."),
     ) -> None:
         from .web_auth import WebAuthConfig
 
@@ -524,9 +525,20 @@ if typer:
         # `yikes web` is launched and `--url` always matches the running server.
         auth_config = WebAuthConfig.load(developer_mode=dev, persist_auth=persistent_auth)
         advertise = _advertise_hosts(host)
+
+        # HTTPS by default: a secure origin is required for the microphone (voice
+        # input) anywhere other than localhost. Fall back to http only if a cert
+        # can't be produced.
+        ssl_files = None
+        if tls:
+            from .web_tls import ensure_cert
+
+            ssl_files = ensure_cert([*advertise, *_lan_ipv4_addresses()])
+        scheme = "https" if ssl_files else "http"
+
         if url_only:
             # one machine-consumable URL: the most reachable host for this bind
-            typer.echo(auth_config.login_url(host=_primary_url_host(host), port=port))
+            typer.echo(auth_config.login_url(host=_primary_url_host(host), port=port, scheme=scheme))
             return
 
         if _port_in_use(host, port):
@@ -550,20 +562,25 @@ if typer:
         # label button) is gated on it; off by default for normal users.
         os.environ["YIKES_WEB_DEV"] = "1" if dev else "0"
         app_instance = create_app(YikesAppController(cwd=root), auth=auth_config)
-        local_url = auth_config.login_url(host=advertise[0], port=port)
+        local_url = auth_config.login_url(host=advertise[0], port=port, scheme=scheme)
         if open_browser:
             threading.Thread(target=lambda: (time.sleep(0.8), webbrowser.open(local_url)), daemon=True).start()
-        typer.echo(f"yikes! web UI listening on {host}:{port} — open a login URL below:")
+        if tls and ssl_files is None:
+            typer.echo("yikes: could not create a TLS cert (is openssl installed?); serving plain HTTP — the microphone will be blocked off localhost.", err=True)
+        typer.echo(f"yikes! web UI listening on {host}:{port} ({scheme.upper()}) — open a login URL below:")
         for advertised in advertise:
-            typer.echo(f"  {auth_config.login_url(host=advertised, port=port)}")
+            typer.echo(f"  {auth_config.login_url(host=advertised, port=port, scheme=scheme)}")
+        if scheme == "https":
+            typer.echo("  (self-signed cert — accept the one-time browser warning; needed for microphone access)")
         if host in {"127.0.0.1", "localhost"}:
             lan = _lan_ipv4_addresses()
             hint = lan[0] if lan else "<lan-ip>"
             typer.echo(
                 f"  (loopback only — for another machine: restart with --host 0.0.0.0 "
-                f"to serve http://{hint}:{port}/, or use an SSH tunnel)"
+                f"to serve {scheme}://{hint}:{port}/, or use an SSH tunnel)"
             )
-        uvicorn.run(app_instance, host=host, port=port, log_level="info")
+        ssl_kwargs = {"ssl_certfile": str(ssl_files[0]), "ssl_keyfile": str(ssl_files[1])} if ssl_files else {}
+        uvicorn.run(app_instance, host=host, port=port, log_level="info", **ssl_kwargs)
 
 
 def main(argv: list[str] | None = None) -> int:

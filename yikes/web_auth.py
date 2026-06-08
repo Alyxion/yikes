@@ -61,9 +61,9 @@ class WebAuthConfig:
             developer_mode=False,
         )
 
-    def login_url(self, *, host: str, port: int, next_path: str = "/") -> str:
+    def login_url(self, *, host: str, port: int, next_path: str = "/", scheme: str = "http") -> str:
         query = urlencode({"key": self.login_key, "next": next_path})
-        return f"http://{host}:{port}/login?{query}"
+        return f"{scheme}://{host}:{port}/login?{query}"
 
     def verify_login_key(self, key: str | None) -> bool:
         if not key:
