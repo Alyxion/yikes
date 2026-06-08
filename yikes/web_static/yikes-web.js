@@ -1622,9 +1622,19 @@ const MicRecorder = {
 };
 
 function whisperAvailable() {
-  return !!(state.speaker && state.speaker.stt_active === "openai")
+  return window.isSecureContext            // getUserMedia needs https/localhost
+    && !!(state.speaker && state.speaker.stt_active === "openai")
     && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
     && typeof window.MediaRecorder !== "undefined";
+}
+
+// Browsers block the microphone on insecure origins (a plain-http LAN address).
+// Detect that up front so we show an actionable message instead of pretending
+// to record.
+function micBlockedReason() {
+  if (window.isSecureContext) return "";
+  const loopback = `http://127.0.0.1:${location.port || "8760"}/`;
+  return `Microphone is blocked on ${location.host} (insecure origin). Open ${loopback} on the host machine, or serve yikes over HTTPS.`;
 }
 
 function voiceActiveSession() {
@@ -1760,6 +1770,14 @@ function stopRecording(abort) {
 function startPTT() {
   state.voice.openedByPress = !state.voice.open;   // remember if THIS press opened it
   openVoicePanel();
+  // Insecure origin (plain-http LAN address) → the browser blocks the mic and
+  // won't even prompt. Say so clearly instead of faking a recording.
+  const blocked = micBlockedReason();
+  if (blocked) {
+    setVoiceStatus(blocked);
+    showToast("Mic blocked: open via 127.0.0.1 or serve over HTTPS — browsers don't allow the microphone on a plain-HTTP LAN address.", "warn");
+    return;
+  }
   els.voiceInterim.textContent = "";
   state.voice.cancelled = false;
   state.voice.active = true;        // a capture session is in flight (finalize once)
