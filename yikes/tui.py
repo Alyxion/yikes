@@ -489,11 +489,16 @@ def run_tui(
 
         @staticmethod
         def _session_tab_label(session: object) -> str:
-            """Intuitive tab label: project/custom name + backend, plus a docker hint."""
-            name = getattr(session, "name", "") or getattr(session, "id", "")[-6:]
+            """Tab label: emoji + project/custom name + backend, plus a docker hint."""
+            from .session_icons import SessionIcons
+
+            session_id = getattr(session, "id", "")
+            meta = SessionIcons().meta_for(session_id)
+            name = meta.get("name") or getattr(session, "name", "") or session_id[-6:]
             backend = getattr(session, "backend", "")
             suffix = " · docker" if getattr(session, "runtime", "") == "docker" else ""
-            return f"{name} · {backend}{suffix}"
+            icon = meta.get("icon", "")
+            return f"{icon} {name} · {backend}{suffix}".strip()
 
         def _refresh_sessions_soon(self) -> None:
             self.run_worker(self._refresh_sessions(), exclusive=False)
