@@ -48,6 +48,12 @@ const els = {
   sessionRail: document.getElementById("session-rail"),
   emojiPop: document.getElementById("emoji-pop"),
   emojiPopGrid: document.getElementById("emoji-pop-grid"),
+  sessionEdit: document.getElementById("session-edit"),
+  seEmoji: document.getElementById("se-emoji"),
+  seName: document.getElementById("se-name"),
+  seDesc: document.getElementById("se-desc"),
+  seSave: document.getElementById("se-save"),
+  seCancel: document.getElementById("se-cancel"),
   navDrawer: document.getElementById("nav-drawer"),
   navBackdrop: document.getElementById("nav-backdrop"),
   navClose: document.getElementById("nav-close"),
@@ -582,6 +588,49 @@ function bindBadgePicker(buttonEl, sessionId) {
   if (badge) badge.addEventListener("click", e => { e.stopPropagation(); openEmojiPicker(sessionId, badge); });
 }
 
+// Right-click a tab/rail item → edit its icon, name and description.
+let _editingSessionId = null;
+let _editingEmoji = "";
+function openSessionEdit(session) {
+  closeEmojiPicker();
+  _editingSessionId = session.id;
+  _editingEmoji = session.icon || "🟦";
+  els.seEmoji.replaceChildren(...EMOJI_CHOICES.map(emoji => {
+    const choice = document.createElement("button");
+    choice.type = "button";
+    choice.className = `emoji-choice ${emoji === _editingEmoji ? "selected" : ""}`;
+    choice.textContent = emoji;
+    choice.onclick = () => {
+      _editingEmoji = emoji;
+      els.seEmoji.querySelectorAll(".emoji-choice").forEach(el => el.classList.toggle("selected", el === choice));
+    };
+    return choice;
+  }));
+  els.seName.value = session.custom_name || "";
+  els.seName.placeholder = session.default_name || "Custom name (blank = default)";
+  els.seDesc.value = session.description || "";
+  els.sessionEdit.classList.remove("hidden");
+  setTimeout(() => els.seName.focus(), 0);
+}
+function closeSessionEdit() { els.sessionEdit.classList.add("hidden"); _editingSessionId = null; }
+function saveSessionEdit() {
+  if (!_editingSessionId) return;
+  send("session.meta", {
+    session_id: _editingSessionId,
+    icon: _editingEmoji,
+    name: els.seName.value,           // blank clears the custom name
+    description: els.seDesc.value,
+  });
+  closeSessionEdit();
+}
+els.seSave.addEventListener("click", saveSessionEdit);
+els.seCancel.addEventListener("click", closeSessionEdit);
+els.sessionEdit.addEventListener("click", e => { if (e.target === els.sessionEdit) closeSessionEdit(); });
+els.sessionEdit.addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.preventDefault(); closeSessionEdit(); }
+  else if (e.key === "Enter" && e.target === els.seName) { e.preventDefault(); saveSessionEdit(); }
+});
+
 // Horizontally-scrollable session switcher for the top bar (mobile mainly).
 function renderSessionRail(sessions, activeId) {
   els.sessionRail.replaceChildren(...(sessions || []).map(session => {
@@ -591,6 +640,7 @@ function renderSessionRail(sessions, activeId) {
     item.title = `${session.name || session.id} · ${session.activity?.label || ""}`.trim();
     item.innerHTML = sessionBadge(session);
     item.onclick = () => { if (session.id !== activeId) send("session.switch", { session_id: session.id }); };
+    item.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); openSessionEdit(session); };
     bindBadgePicker(item, session.id);
     return item;
   }));
@@ -624,6 +674,7 @@ function renderTabs(sessions, activeId) {
       closeNavDrawer();
       if (session.id !== activeId) send("session.switch", { session_id: session.id });
     };
+    tab.oncontextmenu = event => { event.preventDefault(); event.stopPropagation(); openSessionEdit(session); };
     bindBadgePicker(tab, session.id);
     tab.querySelector(".tab-close").onclick = event => {
       event.stopPropagation();

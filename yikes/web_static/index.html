@@ -125,6 +125,18 @@
             </div>
           </section>
         </div>
+        <div id="session-edit" class="dialog-backdrop hidden">
+          <section class="dialog session-edit-card">
+            <h2>Edit session</h2>
+            <label class="se-field"><span>Icon</span><div id="se-emoji" class="se-emoji"></div></label>
+            <label class="se-field"><span>Name</span><input id="se-name" autocomplete="off" placeholder="Custom name (blank = default)"></label>
+            <label class="se-field"><span>Description</span><textarea id="se-desc" rows="3" placeholder="Optional description"></textarea></label>
+            <div class="dialog-actions">
+              <button id="se-cancel" type="button">Cancel</button>
+              <button id="se-save" type="button" class="primary">Save</button>
+            </div>
+          </section>
+        </div>
         <div id="capture-pop" class="capture-pop hidden">
           <section class="capture-card">
             <h2>What state is this really?</h2>

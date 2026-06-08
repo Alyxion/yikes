@@ -1,17 +1,25 @@
-"""Per-session emoji icons, persisted across runs.
+"""Per-session display metadata (emoji icon, custom name, description).
+
+This is stored inside the session's own durable record (the yikes session file
+under ~/.yikes/sessions/<id>.json, in its ``user_data``) — not a separate file —
+so it travels with the session and is shared by the web UI and the CLI.
 
 Every session gets a distinct emoji so it is recognizable at a glance in the
-tabs, the mobile session rail, and the nav drawer. Sessions that predate this
-feature are assigned a random (unused) emoji on first sight; the choice is
-persisted so it stays stable. The user can change a session's emoji from the UI.
+tabs, the mobile session rail, and the nav drawer. Sessions without one are
+assigned a random (unused) emoji on first sight; the choice is persisted. The
+user can also give a session a custom name and description from either surface.
 """
 
 from __future__ import annotations
 
-import json
-import os
+import hashlib
 import random
-from pathlib import Path
+
+from .runtime import DurableSessionManager
+
+ICON_KEY = "icon"
+NAME_KEY = "display_name"
+DESC_KEY = "description"
 
 # Single-codepoint, emoji-presentation glyphs (no ZWJ/variation-selector quirks),
 # so they render consistently in the browser.
@@ -23,64 +31,81 @@ EMOJI_POOL = (
 )
 
 
-def default_icons_path() -> Path:
-    override = os.environ.get("YIKES_SESSION_ICONS")
-    if override:
-        return Path(override).expanduser()
-    config_home = os.environ.get("XDG_CONFIG_HOME")
-    root = Path(config_home).expanduser() if config_home else Path.home() / ".config"
-    return root / "yikes" / "session-icons.json"
+def _stable_icon(session_id: str) -> str:
+    """A deterministic emoji for sessions without a durable record (transient)."""
+    digest = hashlib.sha1(session_id.encode("utf-8")).hexdigest()
+    return EMOJI_POOL[int(digest, 16) % len(EMOJI_POOL)]
 
 
 class SessionIcons:
-    """In-memory cache of session_id → emoji, persisted best-effort to JSON."""
+    """Reads/writes session display metadata from the durable session store."""
 
-    def __init__(self, path: Path | None = None) -> None:
-        self._path = path or default_icons_path()
-        self._icons: dict[str, str] = self._load()
+    def __init__(self, manager: DurableSessionManager | None = None) -> None:
+        self._manager = manager or DurableSessionManager()
 
-    def _load(self) -> dict[str, str]:
-        try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and v}
-
-    def _save(self) -> None:
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(self._icons, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            tmp.replace(self._path)
-        except OSError:
-            pass
-
-    def icon_for(self, session_id: str) -> str:
-        """Return this session's emoji, assigning a random unused one if needed."""
+    def meta_for(self, session_id: str) -> dict[str, str]:
+        """Return {icon, name?, description?}; assign a random icon if missing."""
         session_id = (session_id or "").strip()
         if not session_id:
-            return "🟦"
-        existing = self._icons.get(session_id)
-        if existing:
-            return existing
-        used = set(self._icons.values())
-        available = [emoji for emoji in EMOJI_POOL if emoji not in used] or list(EMOJI_POOL)
-        chosen = random.choice(available)
-        self._icons[session_id] = chosen
-        self._save()
-        return chosen
+            return {"icon": "🟦"}
+        meta = self._manager.get(session_id)
+        if meta is None:
+            return {"icon": _stable_icon(session_id)}
+        data = meta.user_data
+        result: dict[str, str] = {}
+        if data.get(ICON_KEY):
+            result["icon"] = data[ICON_KEY]
+        if data.get(NAME_KEY):
+            result["name"] = data[NAME_KEY]
+        if data.get(DESC_KEY):
+            result["description"] = data[DESC_KEY]
+        if not result.get("icon"):
+            result["icon"] = self._assign_icon(meta)
+        return result
+
+    def icon_for(self, session_id: str) -> str:
+        return self.meta_for(session_id).get("icon", "🟦")
+
+    def update(
+        self,
+        session_id: str,
+        *,
+        icon: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, str] | None:
+        """Update provided fields in the session record. Returns the new meta."""
+        session_id = (session_id or "").strip()
+        meta = self._manager.get(session_id) if session_id else None
+        if meta is None:
+            return None
+        data = meta.user_data
+        if icon is not None and icon.strip() and len(icon.strip()) <= 8:
+            data[ICON_KEY] = icon.strip()
+        if name is not None:
+            cleaned = name.strip()[:80]
+            data[NAME_KEY] = cleaned if cleaned else ""
+            if not cleaned:
+                data.pop(NAME_KEY, None)
+        if description is not None:
+            cleaned = description.strip()[:500]
+            data[DESC_KEY] = cleaned if cleaned else ""
+            if not cleaned:
+                data.pop(DESC_KEY, None)
+        self._manager.save(meta)
+        return self.meta_for(session_id)
 
     def set(self, session_id: str, emoji: str) -> str | None:
-        """Set a session's emoji (capped); returns the stored value or None."""
-        session_id = (session_id or "").strip()
+        """Back-compat: set just the emoji; returns it, or None if invalid/no session."""
         emoji = (emoji or "").strip()
-        if not session_id or not emoji:
+        if not emoji or len(emoji) > 8:
             return None
-        # Keep it to a small grapheme; reject obviously-too-long input.
-        if len(emoji) > 8:
-            return None
-        self._icons[session_id] = emoji
-        self._save()
-        return emoji
+        return emoji if self.update(session_id, icon=emoji) is not None else None
+
+    def _assign_icon(self, meta) -> str:
+        used = {m.user_data.get(ICON_KEY) for m in self._manager.list() if m.user_data.get(ICON_KEY)}
+        available = [emoji for emoji in EMOJI_POOL if emoji not in used] or list(EMOJI_POOL)
+        chosen = random.choice(available)
+        meta.user_data[ICON_KEY] = chosen
+        self._manager.save(meta, touch=False)  # don't reorder tabs on auto-assign
+        return chosen

@@ -63,6 +63,17 @@ class WebMessageHandler:
                         str(message.get("session_id", "")), str(message.get("emoji", ""))
                     ),
                 }
+            if msg_type == "session.meta":
+                # name/description: empty string clears the override; icon: ignored if blank.
+                return {
+                    "type": "state",
+                    "state": self.controller.set_session_meta(
+                        str(message.get("session_id", "")),
+                        icon=_optional_text(message.get("icon")),
+                        name=str(message["name"]) if "name" in message else None,
+                        description=str(message["description"]) if "description" in message else None,
+                    ),
+                }
             if msg_type == "session.close_all":
                 return {"type": "state", "state": self.controller.close_all()}
             if msg_type == "dir.list":

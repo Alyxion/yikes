@@ -151,6 +151,30 @@ if typer:
             return
         os.execvp(command[0], command)
 
+    @app.command("label")
+    def label(
+        session_id: str = typer.Argument(..., help="yikes! session ID (see `yikes sessions`)."),
+        icon: str | None = typer.Option(None, "--icon", help="Emoji icon for the session."),
+        name: str | None = typer.Option(None, "--name", "-n", help="Custom display name (empty string clears it)."),
+        description: str | None = typer.Option(None, "--description", "-d", help="Description (empty string clears it)."),
+        runtime_store: Path = typer.Option(DEFAULT_RUNTIME_STORE, "--runtime-store", help="Durable session store."),
+        sandbox_store: Path = typer.Option(DEFAULT_SANDBOX_STORE, "--sandbox-store", help="Docker sandbox store."),
+    ) -> None:
+        """Set a session's icon, name and/or description (shared with the web UI)."""
+        from .runtime import DurableSessionManager
+        from .session_icons import SessionIcons
+
+        resolved = SessionLifecycle(runtime_store=runtime_store, sandbox_store=sandbox_store).resolve_session_id(session_id) or session_id
+        store = SessionIcons(DurableSessionManager(runtime_store))
+        if store.update(resolved, icon=icon, name=name, description=description) is None:
+            typer.echo(f"Session not found: {session_id}", err=True)
+            raise typer.Exit(1)
+        meta = store.meta_for(resolved)
+        typer.echo(
+            f"{meta.get('icon', '')} {resolved} — name: {meta.get('name') or '(default)'}"
+            + (f" · {meta['description']}" if meta.get("description") else "")
+        )
+
     @app.command("claude")
     def claude(
         name: str | None = typer.Option(None, "--name", "-n", help="Session name. Default: directory basename."),

@@ -129,8 +129,9 @@ class DurableSessionManager:
         sessions.sort(key=lambda item: item.updated_at, reverse=True)
         return sessions
 
-    def save(self, meta: DurableSessionMeta) -> None:
-        meta.touch()
+    def save(self, meta: DurableSessionMeta, *, touch: bool = True) -> None:
+        if touch:
+            meta.touch()
         self.store_dir.mkdir(parents=True, exist_ok=True)
         self._path(meta.id).write_text(json.dumps(_meta_to_json(meta), indent=2))
 

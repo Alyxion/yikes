@@ -119,7 +119,7 @@ class YikesAppController:
                     self._summary_json(
                         session,
                         activity=activity if session.id == active else self._activity_for(session.id),
-                        icon=self.session_icons.icon_for(session.id),
+                        meta=self.session_icons.meta_for(session.id),
                     )
                     for session in sessions
                 ],
@@ -696,22 +696,36 @@ class YikesAppController:
             yield
 
     def set_session_icon(self, session_id: str, emoji: str) -> dict[str, Any]:
-        self.session_icons.set(session_id, emoji)
+        return self.set_session_meta(session_id, icon=emoji)
+
+    def set_session_meta(
+        self,
+        session_id: str,
+        *,
+        icon: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        self.session_icons.update(session_id, icon=icon, name=name, description=description)
         return self.state()
 
     @staticmethod
     def _summary_json(
-        session: SessionSummary, *, activity: TerminalActivity | None = None, icon: str | None = None
+        session: SessionSummary, *, activity: TerminalActivity | None = None, meta: dict[str, str] | None = None
     ) -> dict[str, Any]:
+        meta = meta or {}
         data: dict[str, Any] = {
             "id": session.id,
-            "name": session.name or session.id[-6:],
+            "name": meta.get("name") or session.name or session.id[-6:],
+            "default_name": session.name or session.id[-6:],
+            "custom_name": meta.get("name", ""),
             "runtime": session.runtime,
             "backend": session.backend,
             "state": session.state,
             "location": session.location,
             "detail": session.detail,
-            "icon": icon,
+            "icon": meta.get("icon"),
+            "description": meta.get("description", ""),
             "panes": _panes_for(session),
         }
         if activity is not None:
