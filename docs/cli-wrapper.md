@@ -241,8 +241,9 @@ The "I just want the answer" entry point. Maps to `claude -p` / `codex exec --js
 
 ```bash
 yikes ask "explain @src/auth.py"
-yikes -b codex ask "summarise this diff" < diff.txt
+yikes ask -b codex "summarise this diff" < diff.txt   # prompt + piped stdin
 yikes ask --image screenshot.png "what's broken here?"
+yikes ask "hello" --json                              # structured output
 ```
 
 - Default driver: `direct`.

@@ -88,6 +88,57 @@ if typer:
         for turn in result.turns:
             typer.echo(turn)
 
+    @app.command("ask")
+    def ask(
+        prompt: str | None = typer.Argument(None, help="The prompt to send (omit to read it from stdin)."),
+        backend: Backend = typer.Option(Backend.CLAUDE, "--backend", "-b"),
+        driver: Driver = typer.Option(Driver.DIRECT, "--driver", "-d", help="direct = headless one-shot; tmux = real interactive transport."),
+        cwd: Path | None = typer.Option(None, "--cwd", help="Working directory the agent runs in."),
+        timeout: float = typer.Option(180.0, "--timeout"),
+        model: str | None = typer.Option(None, "--model"),
+        complexity: Complexity = typer.Option(Complexity.MEDIUM, "--complexity"),
+        web_search: bool = typer.Option(True, "--web-search/--no-web-search"),
+        tmux: bool = typer.Option(False, "--tmux/--no-tmux", help="Use real interactive tmux transport where supported."),
+        capture: bool = typer.Option(True, "--capture/--no-capture", help="Use managed answer capture for tmux chat turns."),
+        read_dir: list[Path] | None = typer.Option(None, "--read-dir"),
+        write_dir: list[Path] | None = typer.Option(None, "--write-dir"),
+        mcp: list[str] | None = typer.Option(None, "--mcp"),
+        image: list[Path] | None = typer.Option(None, "--image", help="Attach an image file (repeatable)."),
+        json_output: bool = typer.Option(False, "--json"),
+    ) -> None:
+        """Send one arbitrary prompt to an agent and print the answer (headless)."""
+        import sys as _sys
+
+        text = (prompt or "").strip()
+        if not _sys.stdin.isatty():  # allow `yikes ask "summarise" < diff.txt`
+            piped = _sys.stdin.read().strip()
+            if piped:
+                text = f"{text}\n\n{piped}".strip()
+        if not text:
+            typer.echo("yikes: provide a prompt (as an argument or on stdin).", err=True)
+            raise typer.Exit(1)
+        from .attachments import image_attachment
+
+        try:
+            attachments = tuple(image_attachment(path) for path in (image or []))
+            settings = _settings_from_cli(web_search, tmux, capture, read_dir, write_dir, mcp)
+            conversation = ChatService().create_conversation(
+                backend, driver, cwd=cwd, timeout=timeout, model=model, complexity=complexity, settings=settings,
+            )
+            answer = conversation.ask(text, attachments)
+        except YikesError as exc:
+            typer.echo(f"yikes: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        if json_output:
+            typer.echo(json.dumps({
+                "backend": Backend(backend).value,
+                "driver": Driver(driver).value,
+                "prompt": text,
+                "answer": answer,
+            }))
+            return
+        typer.echo(answer)
+
     @app.command("tui")
     def tui(
         backend: Backend | None = typer.Option(None, "--backend", "-b"),

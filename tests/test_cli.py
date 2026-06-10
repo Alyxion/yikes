@@ -876,3 +876,43 @@ def test_tmux_send_pastes_text_and_submits_by_name(monkeypatch, tmp_path, capsys
     assert any("paste-buffer" in call[0] for call in calls)
     assert any(call[0][-1] == "Enter" for call in calls)
     assert "Sent key Enter" in capsys.readouterr().out
+
+
+def test_ask_arg_prompt_prints_answer(monkeypatch, capsys) -> None:
+    import yikes.cli as cli_mod
+
+    seen = {}
+
+    class _Conv:
+        def ask(self, text, attachments=()):
+            seen["text"] = text
+            seen["attachments"] = attachments
+            return "Tokyo."
+
+    class _Service:
+        def create_conversation(self, backend, driver, **kwargs):
+            seen["backend"] = backend
+            return _Conv()
+
+    monkeypatch.setattr(cli_mod, "ChatService", lambda: _Service())
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)  # no piped input
+    assert cli_mod.main(["ask", "capital of Japan?"]) == 0
+    assert "Tokyo." in capsys.readouterr().out
+    assert seen["text"] == "capital of Japan?"
+
+
+def test_ask_combines_prompt_and_stdin(monkeypatch, capsys) -> None:
+    import io
+    import yikes.cli as cli_mod
+
+    seen = {}
+
+    class _Conv:
+        def ask(self, text, attachments=()):
+            seen["text"] = text
+            return "ok"
+
+    monkeypatch.setattr(cli_mod, "ChatService", lambda: type("S", (), {"create_conversation": lambda self, *a, **k: _Conv()})())
+    monkeypatch.setattr("sys.stdin", io.StringIO("piped diff content"))
+    assert cli_mod.main(["ask", "summarise this"]) == 0
+    assert seen["text"] == "summarise this\n\npiped diff content"
