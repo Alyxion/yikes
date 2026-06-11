@@ -916,3 +916,32 @@ def test_ask_combines_prompt_and_stdin(monkeypatch, capsys) -> None:
     monkeypatch.setattr("sys.stdin", io.StringIO("piped diff content"))
     assert cli_mod.main(["ask", "summarise this"]) == 0
     assert seen["text"] == "summarise this\n\npiped diff content"
+
+
+def test_claude_print_runs_headless_without_launch(monkeypatch, capsys) -> None:
+    """`yikes claude -P` executes the prompt directly and never opens a session."""
+    import yikes.cli as cli_mod
+    from yikes.domain import Backend, Driver
+
+    seen = {}
+
+    class _Conv:
+        def ask(self, text, attachments=()):
+            seen["text"] = text
+            return "pong"
+
+    class _Service:
+        def create_conversation(self, backend, driver, **kwargs):
+            seen["backend"] = backend
+            seen["driver"] = driver
+            return _Conv()
+
+    monkeypatch.setattr(cli_mod, "ChatService", lambda: _Service())
+    # _launch must never run for the print path.
+    monkeypatch.setattr(cli_mod, "_launch", lambda *a, **k: pytest.fail("launched a session for -P"))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)  # no piped input
+    assert cli_mod.main(["claude", "-P", "ping"]) == 0
+    assert "pong" in capsys.readouterr().out
+    assert seen["text"] == "ping"
+    assert seen["backend"] == Backend.CLAUDE
+    assert seen["driver"] == Driver.DIRECT

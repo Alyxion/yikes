@@ -211,8 +211,12 @@ if typer:
         port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
         message: str | None = typer.Option(None, "--message", "-m", help="Initial prompt to pre-fill in a new session."),
+        print_: str | None = typer.Option(None, "--print", "-P", help="Execute this prompt headlessly (like claude -p) and print the answer instead of opening a session."),
         yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight panel prompt and start immediately."),
     ) -> None:
+        if print_ is not None:
+            _print_headless(Backend.CLAUDE, print_, model=model, cwd=cwd)
+            return
         _launch(Backend.CLAUDE, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, message=message, yes=yes)
 
     @app.command("codex")
@@ -224,8 +228,12 @@ if typer:
         port: list[str] | None = typer.Option(None, "--port", "-p", help="Publish a port when isolated (HOST or HOST:CONTAINER). Repeatable."),
         cwd: Path | None = typer.Option(None, "--cwd", help="Project directory. Default: current directory."),
         message: str | None = typer.Option(None, "--message", "-m", help="Initial prompt to pre-fill in a new session."),
+        print_: str | None = typer.Option(None, "--print", "-P", help="Execute this prompt headlessly (like codex exec) and print the answer instead of opening a session."),
         yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight panel prompt and start immediately."),
     ) -> None:
+        if print_ is not None:
+            _print_headless(Backend.CODEX, print_, model=model, cwd=cwd)
+            return
         _launch(Backend.CODEX, name=name, isolated=isolated, new=new, model=model, port=port, cwd=cwd, message=message, yes=yes)
 
     @app.command("init")
@@ -708,6 +716,33 @@ def _launch(
         _launch_docker(backend, project_dir, session_name, new=new, model=resolved_model, ports=ports, message=goal)
     else:
         _launch_host(backend, project_dir, session_name, new=new, model=resolved_model, message=goal)
+
+
+def _print_headless(
+    backend: Backend,
+    prompt: str,
+    *,
+    model: str | None,
+    cwd: Path | None,
+) -> None:
+    """Run a one-shot prompt headlessly (like ``claude -p``) and print the answer."""
+    text = prompt.strip()
+    if not sys.stdin.isatty():  # allow `yikes claude -P "summarise" < diff.txt`
+        piped = sys.stdin.read().strip()
+        if piped:
+            text = f"{text}\n\n{piped}".strip()
+    if not text:
+        typer.echo("yikes: provide a prompt for --print.", err=True)
+        raise typer.Exit(1)
+    try:
+        conversation = ChatService().create_conversation(
+            backend, Driver.DIRECT, cwd=cwd, model=model,
+        )
+        answer = conversation.ask(text)
+    except YikesError as exc:
+        typer.echo(f"yikes: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(answer)
 
 
 def _preflight(

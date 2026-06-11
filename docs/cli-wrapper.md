@@ -34,7 +34,7 @@ Behavior:
 - **Per-directory by default.** With no `-n/--name`, the session name is the current directory's basename (sanitized to tmux's `A-Za-z0-9_.-` charset). Re-running `yikes claude` in the same project reattaches the same live session instead of spawning a new one. In the dashboard tabs and `yikes sessions`, the session is shown by a git-relative label — `<repo>/<folder>` inside a repository (e.g. `fckten/dashboard`), or just the folder name outside one — unless you passed a custom `-n` name, which is shown as-is.
 - **Concurrency.** Because names are per-directory, parallel sessions live in different project dirs and don't collide. Within one project, repeated launches resume the single session for that backend.
 - **Drop-in.** The command starts (or reuses) the session and then `exec`s you into the live tmux UI, exactly like `yikes attach`. Detach with `Ctrl-b d` and relaunch to come back.
-- **Options.** `-n/--name`, `-i/--isolated` (`-I/--no-isolated`), `--new`, `--model`, `-p/--port` (repeatable, see below), and `--cwd` to target a directory other than the current one.
+- **Options.** `-n/--name`, `-i/--isolated` (`-I/--no-isolated`), `--new`, `--model`, `-p/--port` (repeatable, see below), `--cwd` to target a directory other than the current one, `-m/--message` to pre-fill an initial prompt (see below), and `-P/--print` to execute a prompt headlessly instead of opening a session (see below).
 
 ### Pre-flight panel
 
@@ -68,6 +68,17 @@ yikes claude -m "scaffold a NiceGUI dashboard that serves on 8080"
 ```
 
 The message is pre-filled into the session's input on a **new** session only (never on a reattach) and is **not auto-submitted** — yikes waits for the backend to be ready, pastes the text, and leaves it for you to review and send with Enter. The same message also biases `yikes setup`'s scan (below) so the generated config matches the intended stack.
+
+### Execute a prompt headlessly (`-P/--print`)
+
+`-m` *opens* an interactive session with the prompt pre-filled; it does not run it for you. When you just want the answer — the `claude -p "…"` / `codex exec` muscle memory — use `-P/--print` instead. It runs the prompt once through the direct CLI driver (no tmux session, no attach), prints the answer to stdout, and exits:
+
+```bash
+yikes claude -P "summarise @src/auth.py"
+yikes codex  -P "what does this diff do?" < change.diff   # prompt + piped stdin
+```
+
+`-P` short-circuits the launcher: the pre-flight panel, session naming, and port mapping are all skipped. `--model` still applies. For the backend-agnostic form with more knobs (`--driver`, `--image`, `--json`, `--complexity`, …) use [`yikes ask`](#yikes-ask--one-shot-headless), which this option is a launcher-local shortcut for.
 
 ### `yikes setup` — agentic yikes.toml
 
