@@ -15,6 +15,12 @@ The same runtime is exposed three ways — an interactive terminal app, a login-
 
 <p align="center"><img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/runtime-architecture.svg" alt="yikes! runtime architecture — you drive one shared controller (terminal app, web UI, CLI/Python API) that runs Claude Code or Codex via either driver (tmux interactive or one-shot cli, claude -p / codex exec) on either location (host or docker, isolated)" width="820"></p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/screenshot-tui.png" alt="yikes! terminal app — a Textual console with a status sidebar, one tab per session, and a chat input." width="49%">
+  <img src="https://raw.githubusercontent.com/Alyxion/yikes/main/media/screenshot-web.png" alt="yikes! web control surface — the browser UI with per-session tabs, the live terminal, and a push-to-talk voice button." width="49%">
+</p>
+<p align="center"><sub>The terminal app (left) and the login-gated web control surface (right) — the same durable sessions, two faces.</sub></p>
+
 ---
 
 ## Why yikes!
