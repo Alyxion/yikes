@@ -57,6 +57,7 @@ yikes claude                  # start or reattach an interactive Claude session 
 yikes codex                   # same, with the Codex CLI
 yikes claude -i               # run it isolated in Docker (ports from yikes.toml)
 yikes claude -m "scaffold a FastAPI app"   # seed the first prompt
+yikes claude -P "summarise @src/auth.py"   # run one prompt headlessly and print the answer
 yikes                         # chooser: claude / codex / terminal overview
 ```
 
@@ -75,7 +76,7 @@ See the [CLI reference](docs/cli-wrapper.md) for the full command surface, Docke
 
 ## Web control surface
 
-`yikes web` serves a login-key-gated UI on all interfaces by default — the key is stored user-globally and login is rate-limited against brute force, so it is safe on a LAN. `yikes web --url` prints the ready-to-open login URL so you can reach it from another machine without copying the key by hand.
+`yikes web` serves a login-key-gated UI over **HTTPS** (a self-signed cert generated on first run; `--no-tls` for plain HTTP) on all interfaces by default — the key is stored user-globally and login is rate-limited against brute force, so it is safe on a LAN. HTTPS also lets the microphone work from other machines, since browsers only grant it on secure origins. `yikes web --url` prints the ready-to-open login URL so you can reach it from another machine without copying the key by hand.
 
 Each session tab carries **panes** (sub-tabs): the live terminal, an embedded view of the **web app the agent is building** (a full browser bar with reload, history, and a load/unload toggle), auto-refreshing **health/status tables**, and sidebar links. Panes are declared per project in `yikes.toml` `[[panes]]` — by port, never a hardcoded host — or added at runtime with the **＋ web** button. A pane with a `start` command gets a Start/Stop control so yikes can run the dev server for you.
 
